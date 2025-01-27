@@ -1,0 +1,15 @@
+# Streamlit for the web application framework
+streamlit>=1.0.0
+
+# Pyvis for network visualization
+pyvis>=0.1.11
+
+# Requests for handling HTTP requests
+requests>=2.25.1
+
+# RDFLib for working with RDF data
+rdflib>=6.0.0
+
+# Optional: If you plan to deploy, consider specifying a server
+# For example, using `gunicorn` for deployment
+# gunicorn>=20.0.4

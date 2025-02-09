@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 Complete Python Network Visualization Application with Enhancements
-Author: ChatGPT
+Author: Huw Sandaver / ChatGPT
 Date: 2025-02-09
 """
 
@@ -84,7 +84,8 @@ RELATIONSHIP_CONFIG: Dict[str, str] = {
     "studentOf": "#8B008B",
     "employedBy": "#B8860B",
     "occupation": "#8FBC8F",
-    "fieldOfActivity": "#FF4500"
+    "fieldOfActivity": "#FF4500",
+    "educatedAt": "#8B4513"  # NEW relationship type
     # ▲▲▲ NEW RELATIONSHIPS ▲▲▲
 }
 
@@ -115,6 +116,7 @@ DEFAULT_NODE_COLOR = "#D3D3D3"
 # Performance Monitoring Decorator
 # -----------------------------------------------------------------------------
 def performance_monitor(func):
+    from functools import wraps
     @wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -170,7 +172,7 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
         for value in values:
             normalized_id: Optional[str] = None
             if isinstance(value, dict):
-                if rel in ["spouse", "studentOf", "employedBy"]:
+                if rel in ["spouse", "studentOf", "employedBy", "educatedAt"]:
                     normalized_id = remove_fragment(value.get('carriedOutBy', value.get('id', '')))
                 elif rel == 'succeededBy':
                     normalized_id = remove_fragment(value.get('resultedIn', ''))
@@ -216,7 +218,7 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
                 for value in values:
                     normalized_id: Optional[str] = None
                     if isinstance(value, dict):
-                        if rel in ["spouse", "studentOf", "employedBy"]:
+                        if rel in ["spouse", "studentOf", "employedBy", "educatedAt"]:
                             normalized_id = remove_fragment(value.get('carriedOutBy', value.get('id', '')))
                         elif rel == 'succeededBy':
                             normalized_id = remove_fragment(value.get('resultedIn', ''))

@@ -11,12 +11,12 @@ import streamlit.components.v1 as components
 from pyvis.network import Network
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
+import networkx as nx  # For static layout computation
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
-
 
 # -----------------------------------------------------------------------------
 # Configuration Constants
@@ -61,9 +61,19 @@ NODE_TYPE_COLORS = {
     "Unknown": "#D3D3D3"
 }
 
+# Define node shapes for each entity type to further improve aesthetics.
+NODE_TYPE_SHAPES = {
+    "Person": "circle",
+    "Organization": "box",
+    "Place": "triangle",
+    "StillImage": "dot",  # Fallback shape
+    "Event": "star",
+    "Work": "ellipse",
+    "Unknown": "dot"
+}
+
 DEFAULT_NODE_COLOR = "#D3D3D3"
 LABEL_CACHE = {}  # Cache for fetched labels
-
 
 # -----------------------------------------------------------------------------
 # Utility Functions
@@ -76,7 +86,6 @@ def remove_fragment(uri: str) -> str:
     except Exception as e:
         logging.error(f"Error removing fragment from {uri}: {e}")
         return uri
-
 
 def fetch_label_from_uri(uri: str, cache: dict) -> str:
     """
@@ -105,7 +114,6 @@ def fetch_label_from_uri(uri: str, cache: dict) -> str:
         logging.error(f"Error fetching label from {uri}: {e}")
         cache[uri] = uri
         return uri
-
 
 def normalize_data(data: dict) -> dict:
     """
@@ -154,7 +162,6 @@ def normalize_data(data: dict) -> dict:
         data[rel] = normalized_values
     return data
 
-
 def parse_entities(json_files) -> tuple:
     """
     Parse multiple JSON files into normalized entities.
@@ -192,7 +199,6 @@ def parse_entities(json_files) -> tuple:
             errors.append(error_details)
             logging.error(f"Error parsing file: {error_details}")
     return all_data, id_to_label, errors
-
 
 def sparql_query(query: str, all_data: list) -> set:
     """
@@ -238,32 +244,37 @@ def sparql_query(query: str, all_data: list) -> set:
         st.error(f"Invalid SPARQL query. Please check your syntax: {e}")
     return filtered_nodes
 
-
 # -----------------------------------------------------------------------------
 # Graph Building Helpers
 # -----------------------------------------------------------------------------
 def add_node(net: Network, node_id: str, label: str, entity_types: list, color: str,
              search_node: str = None, show_labels: bool = True) -> None:
-    """Helper to add a node to the Pyvis network."""
+    """
+    Helper to add a node to the Pyvis network with enhanced aesthetics.
+    Uses the first entity type to determine the node shape.
+    Includes widthConstraint to wrap long labels.
+    """
     node_title = f"{label}<br>Types: {', '.join(entity_types)}"
     is_search = (search_node and node_id == search_node)
+    shape = NODE_TYPE_SHAPES.get(entity_types[0], "dot") if entity_types else "dot"
     net.add_node(
         node_id,
         label=label if show_labels else "",
         title=node_title,
         color=color,
-        shape="dot",
+        shape=shape,
         size=20 if is_search else 15,
         font={"size": 12, "face": "Arial", "color": "#343a40"},
         borderWidth=2 if is_search else 1,
-        borderColor="#FF5733" if is_search else "#343a40"
+        borderColor="#FF5733" if is_search else "#343a40",
+        shadow=True,
+        widthConstraint={"maximum": 150}  # Limits label width and wraps text
     )
-    logging.debug(f"Added node: {label} ({node_id}) with color {color}")
-
+    logging.debug(f"Added node: {label} ({node_id}) with color {color} and shape {shape}")
 
 def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: dict,
              search_node: str = None) -> None:
-    """Helper to add an edge to the Pyvis network."""
+    """Helper to add an edge to the Pyvis network with enhanced styling."""
     edge_color = RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
     is_search_edge = search_node and (src == search_node or dst == search_node)
@@ -280,7 +291,6 @@ def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: d
     )
     logging.debug(f"Added edge: {src} --{label_text}--> {dst}")
 
-
 def build_graph(
     all_data: list,
     id_to_label: dict,
@@ -292,6 +302,7 @@ def build_graph(
 ) -> Network:
     """
     Build and configure the Pyvis graph based on the parsed data.
+    Applies dynamic aesthetic adjustments based on the number of nodes.
     """
     net = Network(
         height="750px",
@@ -314,12 +325,9 @@ def build_graph(
     # Add nodes from entities
     for item in all_data:
         subject_id = item["subject"]
-        # Filter out nodes if needed
         if filtered_nodes and subject_id not in filtered_nodes:
             logging.debug(f"Skipping node {subject_id} due to filtering")
             continue
-
-        # Get color based on entity type
         color = next((NODE_TYPE_COLORS.get(t, DEFAULT_NODE_COLOR) for t in item["type"]), DEFAULT_NODE_COLOR)
         if subject_id not in added_nodes:
             add_node(net, subject_id, id_to_label.get(subject_id, subject_id), item["type"], color,
@@ -334,7 +342,6 @@ def build_graph(
             if filtered_nodes and (src not in filtered_nodes or dst not in filtered_nodes):
                 logging.debug(f"Skipping edge {src} --{relationship}--> {dst} due to filtering")
                 continue
-            # Ensure destination node exists
             if dst not in added_nodes:
                 dst_label = id_to_label.get(dst, dst)
                 add_node(net, dst, dst_label, ["Unknown"], DEFAULT_NODE_COLOR, show_labels=show_labels)
@@ -343,59 +350,75 @@ def build_graph(
                 add_edge(net, src, dst, relationship, id_to_label, search_node=search_node)
                 edge_set.add((src, dst, relationship))
 
-    # Global Pyvis graph options
-    net.set_options("""
-    {
-        "nodes": {
-            "font": {
-                "size": 12,
+    # Dynamic aesthetic adjustments based on node count
+    node_count = len(net.nodes)
+    node_font_size = 12 if node_count <= 50 else 10
+    edge_font_size = 10 if node_count <= 50 else 8
+
+    net.options = json.loads(f"""
+    {{
+        "nodes": {{
+            "font": {{
+                "size": {node_font_size},
                 "face": "Arial",
                 "color": "#343a40",
                 "strokeWidth": 0
-            }
-        },
-        "edges": {
-            "font": {
-                "size": 10,
+            }}
+        }},
+        "edges": {{
+            "font": {{
+                "size": {edge_font_size},
                 "face": "Arial",
                 "align": "middle",
                 "color": "#343a40"
-            },
-            "smooth": {
+            }},
+            "smooth": {{
                 "type": "continuous"
-            }
-        },
-        "physics": {
-            "forceAtlas2Based": {
+            }}
+        }},
+        "physics": {{
+            "forceAtlas2Based": {{
                 "gravity": -50,
                 "centralGravity": 0.01,
                 "springLength": 150,
                 "springStrength": 0.08
-            },
+            }},
             "minVelocity": 0.75,
             "solver": "forceAtlas2Based"
-        },
-        "interaction": {
+        }},
+        "interaction": {{
             "hover": true,
             "navigationButtons": true,
             "zoomView": true,
             "dragNodes": true,
             "multiselect": true,
             "selectConnectedEdges": true
-        }
-    }
+        }}
+    }}
     """)
     return net
 
-
-def create_legend(relationship_colors: dict) -> str:
-    """Generate an HTML legend for relationship types."""
-    legend_items = [
-        f"<li><span style='color:{color};'>●</span> {rel.replace('_', ' ').title()}</li>"
+def create_legends(relationship_colors: dict, node_type_colors: dict) -> str:
+    """Generate an HTML legend for relationship types and node types."""
+    relationship_items = "".join(
+        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>"
         for rel, color in relationship_colors.items()
-    ]
-    return f"<h4>Legend</h4><ul style='list-style: none; padding: 0;'>{''.join(legend_items)}</ul>"
-
+    )
+    node_type_items = "".join(
+        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {ntype}</li>"
+        for ntype, color in node_type_colors.items()
+    )
+    return (
+        f"<h4>Legends</h4>"
+        f"<div style='display:flex;'>"
+        f"<ul style='list-style: none; padding: 0; margin-right: 20px;'>"
+        f"<strong>Relationships</strong>{relationship_items}"
+        f"</ul>"
+        f"<ul style='list-style: none; padding: 0;'>"
+        f"<strong>Node Types</strong>{node_type_items}"
+        f"</ul>"
+        f"</div>"
+    )
 
 def display_node_metadata(node_id: str, all_data: list, id_to_label: dict) -> None:
     """Display metadata for a given node in Streamlit."""
@@ -427,7 +450,6 @@ def display_node_metadata(node_id: str, all_data: list, id_to_label: dict) -> No
     else:
         st.write("No metadata available for this node.")
 
-
 # -----------------------------------------------------------------------------
 # Main Streamlit App
 # -----------------------------------------------------------------------------
@@ -438,7 +460,8 @@ def main():
         """
         ### Explore Relationships Between Entities
         Upload multiple JSON files representing entities and generate an interactive network.
-        Use the sidebar to filter relationships, search for nodes, and manually set node positions.
+        Use the sidebar to filter relationships, search for nodes, manually set node positions,
+        and now even edit the graph directly!
         """
     )
 
@@ -450,15 +473,16 @@ def main():
         'search_term': "",
         'show_labels': True,
         'sparql_query': "",
-        'filtered_types': []
+        'filtered_types': [],
+        'enable_physics': True,
+        # New graph editing state variables
+        'graph_data': None,
+        'id_to_label': {}
     }
     for key, default in state_vars.items():
         if key not in st.session_state:
             st.session_state[key] = default
 
-    # -----------------------------------------------------------------------------
-    # Sidebar Controls
-    # -----------------------------------------------------------------------------
     st.sidebar.header("Controls")
     uploaded_files = st.sidebar.file_uploader(
         label="Upload JSON Files",
@@ -466,6 +490,20 @@ def main():
         accept_multiple_files=True,
         help="Select JSON files describing entities and relationships"
     )
+
+    # Parse files and initialize graph_data if not already done
+    if uploaded_files:
+        try:
+            all_data, id_to_label, errors = parse_entities(uploaded_files)
+            # Initialize graph_data for editing only once
+            if not st.session_state["graph_data"]:
+                st.session_state["graph_data"] = all_data
+                st.session_state["id_to_label"] = id_to_label
+        except Exception as e:
+            st.sidebar.error(f"Error parsing files: {e}")
+            st.session_state["graph_data"], st.session_state["id_to_label"] = [], {}
+    else:
+        st.session_state["graph_data"], st.session_state["id_to_label"] = [], {}
 
     selected_relationships = st.sidebar.multiselect(
         label="Select Relationship Types to Display",
@@ -475,19 +513,117 @@ def main():
     )
     st.session_state.selected_relationships = selected_relationships
 
-    # Parse entities if files are uploaded
-    if uploaded_files:
-        try:
-            all_data, id_to_label, errors = parse_entities(uploaded_files)
-        except Exception as e:
-            st.sidebar.error(f"Error parsing files: {e}")
-            all_data, id_to_label, errors = [], {}, [str(e)]
-    else:
-        all_data, id_to_label, errors = [], {}, []
+    enable_physics = st.sidebar.checkbox(
+        label="Enable Physics Simulation",
+        value=st.session_state.enable_physics,
+        help="Toggle physics simulation on/off. Off will use a static layout computed with spring layout, nyah~!"
+    )
+    st.session_state.enable_physics = enable_physics
 
-    if all_data:
-        # Filter by Entity Types
-        all_types = {t for item in all_data for t in item.get("type", [])}
+    if st.sidebar.button("Reset Manual Node Positions"):
+        st.session_state.node_positions = {}
+        st.sidebar.success("Manual positions have been reset, nyah~!")
+
+    # -------------------------------------------------------------------------
+    # New Graph Editing Section
+    # -------------------------------------------------------------------------
+    st.sidebar.header("✏️ Graph Editing")
+    with st.sidebar.expander("Edit Graph"):
+        edit_option = st.radio("Select action", ("Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"))
+        
+        if edit_option == "Add Node":
+            with st.form("add_node_form"):
+                new_node_id = st.text_input("Node ID")
+                new_node_label = st.text_input("Node Label")
+                new_node_type = st.selectbox("Node Type", list(NODE_TYPE_COLORS.keys()))
+                submitted = st.form_submit_button("Add Node")
+                if submitted and new_node_id and new_node_label:
+                    new_node = {
+                        "subject": new_node_id,
+                        "label": new_node_label,
+                        "edges": [],
+                        "type": [new_node_type],
+                        "metadata": {
+                            "id": new_node_id,
+                            "prefLabel": {"en": new_node_label},
+                            "type": [new_node_type]
+                        }
+                    }
+                    st.session_state.graph_data.append(new_node)
+                    st.session_state.id_to_label[new_node_id] = new_node_label
+                    st.sidebar.success(f"Node '{new_node_label}' added, nyah~!")
+        
+        elif edit_option == "Delete Node":
+            node_ids = [node["subject"] for node in st.session_state.graph_data]
+            if node_ids:
+                node_to_delete = st.selectbox("Select Node to Delete", node_ids)
+                if st.button("Delete Node"):
+                    # Remove the node and remove any edges referencing it
+                    st.session_state.graph_data = [node for node in st.session_state.graph_data if node["subject"] != node_to_delete]
+                    for node in st.session_state.graph_data:
+                        node["edges"] = [edge for edge in node["edges"] if edge[1] != node_to_delete]
+                    st.session_state.id_to_label.pop(node_to_delete, None)
+                    st.sidebar.success(f"Node '{node_to_delete}' deleted!")
+            else:
+                st.info("No nodes available to delete, nyah~!")
+        
+        elif edit_option == "Modify Node":
+            node_ids = [node["subject"] for node in st.session_state.graph_data]
+            if node_ids:
+                node_to_modify = st.selectbox("Select Node to Modify", node_ids)
+                node_obj = next((node for node in st.session_state.graph_data if node["subject"] == node_to_modify), None)
+                if node_obj:
+                    with st.form("modify_node_form"):
+                        new_label = st.text_input("New Label", value=node_obj["label"])
+                        new_type = st.selectbox("New Type", list(NODE_TYPE_COLORS.keys()),
+                                                index=list(NODE_TYPE_COLORS.keys()).index(node_obj["type"][0])
+                                                if node_obj["type"][0] in NODE_TYPE_COLORS else 0)
+                        submitted = st.form_submit_button("Modify Node")
+                        if submitted:
+                            node_obj["label"] = new_label
+                            node_obj["type"] = [new_type]
+                            node_obj["metadata"]["prefLabel"]["en"] = new_label
+                            st.session_state.id_to_label[node_to_modify] = new_label
+                            st.sidebar.success(f"Node '{node_to_modify}' modified!")
+            else:
+                st.info("No nodes available to modify, nyah~!")
+        
+        elif edit_option == "Add Edge":
+            if st.session_state.graph_data:
+                with st.form("add_edge_form"):
+                    source_node = st.selectbox("Source Node", [node["subject"] for node in st.session_state.graph_data])
+                    target_node = st.selectbox("Target Node", [node["subject"] for node in st.session_state.graph_data])
+                    relationship = st.selectbox("Relationship", list(RELATIONSHIP_CONFIG.keys()))
+                    submitted = st.form_submit_button("Add Edge")
+                    if submitted:
+                        for node in st.session_state.graph_data:
+                            if node["subject"] == source_node:
+                                node["edges"].append((source_node, target_node, relationship))
+                        st.sidebar.success(f"Edge '{relationship}' from '{source_node}' to '{target_node}' added!")
+            else:
+                st.info("No nodes available to add an edge, nyah~!")
+        
+        elif edit_option == "Delete Edge":
+            # Gather all edges as a list of tuples
+            all_edges = []
+            for node in st.session_state.graph_data:
+                for edge in node["edges"]:
+                    all_edges.append(edge)
+            if all_edges:
+                edge_to_delete = st.selectbox("Select Edge to Delete", all_edges)
+                if st.button("Delete Edge"):
+                    for node in st.session_state.graph_data:
+                        if node["subject"] == edge_to_delete[0]:
+                            node["edges"] = [edge for edge in node["edges"] if edge != edge_to_delete]
+                    st.sidebar.success("Edge deleted!")
+            else:
+                st.info("No edges available to delete, nyah~!")
+    
+    # -------------------------------------------------------------------------
+    # Other Controls (Filtering, Search, Manual Positioning)
+    # -------------------------------------------------------------------------
+    if st.session_state.graph_data:
+        all_types = {t for item in st.session_state.graph_data for t in item.get("type", [])}
         filtered_types = st.sidebar.multiselect(
             "Filter by Entity Types",
             options=list(all_types),
@@ -523,16 +659,14 @@ def main():
     )
     st.session_state.show_labels = show_labels
 
-    st.sidebar.markdown(create_legend(RELATIONSHIP_CONFIG), unsafe_allow_html=True)
+    st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
 
-    # Manual Node Positioning
     st.sidebar.header("📍 Manual Node Positioning")
-    if uploaded_files and all_data:
-        unique_nodes = {entity['subject']: entity['label'] for entity in all_data}
-        # Include nodes from edges as well
-        for entity in all_data:
+    if st.session_state.graph_data:
+        unique_nodes = {entity['subject']: entity['label'] for entity in st.session_state.graph_data}
+        for entity in st.session_state.graph_data:
             for _, dst, _ in entity['edges']:
-                unique_nodes.setdefault(dst, id_to_label.get(dst, dst))
+                unique_nodes.setdefault(dst, st.session_state.id_to_label.get(dst, dst))
 
         selected_node = st.sidebar.selectbox(
             label="Select a Node to Position",
@@ -540,6 +674,7 @@ def main():
             format_func=lambda x: unique_nodes.get(x, x),
             key="selected_node_control"
         )
+        st.session_state.selected_node = selected_node
         if selected_node:
             with st.sidebar.form(key="position_form"):
                 x_pos = st.number_input(
@@ -560,34 +695,34 @@ def main():
                         f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})"
                     )
 
-    # -----------------------------------------------------------------------------
-    # Main Display
-    # -----------------------------------------------------------------------------
-    if uploaded_files:
-        if errors:
-            with st.expander("⚠️ Parsing Errors"):
-                for error in errors:
-                    st.error(error)
-        if all_data:
-            # Try to find a matching node for search term
+    graph_html = None
+    if st.session_state.graph_data:
+        # Display parsing errors if any (from file upload)
+        if uploaded_files:
+            all_data, _, errors = parse_entities(uploaded_files)
+            if errors:
+                with st.expander("⚠️ Parsing Errors"):
+                    for error in errors:
+                        st.error(error)
+        
+        if st.session_state.graph_data:
             search_node_id = None
             if search_term.strip():
-                for entity in all_data:
+                for entity in st.session_state.graph_data:
                     if entity['label'].lower() == search_term.lower():
                         search_node_id = entity['subject']
                         break
                 if not search_node_id:
-                    for node_id, label in id_to_label.items():
+                    for node_id, label in st.session_state.id_to_label.items():
                         if label.lower() == search_term.lower():
                             search_node_id = node_id
                             break
                 if not search_node_id:
                     st.sidebar.warning("Node not found. Please check the name and try again.")
 
-            # Apply SPARQL query filtering
-            filtered_nodes = sparql_query(sparql_query_input, all_data)
+            filtered_nodes = sparql_query(sparql_query_input, st.session_state.graph_data)
             if st.session_state.filtered_types:
-                filtered_by_type = {item["subject"] for item in all_data
+                filtered_by_type = {item["subject"] for item in st.session_state.graph_data
                                     if any(t in st.session_state.filtered_types for t in item.get("type", []))}
                 filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes else filtered_by_type
 
@@ -595,8 +730,8 @@ def main():
 
             with st.spinner("Generating Network Graph..."):
                 net = build_graph(
-                    all_data=all_data,
-                    id_to_label=id_to_label,
+                    all_data=st.session_state.graph_data,
+                    id_to_label=st.session_state.id_to_label,
                     selected_relationships=st.session_state.selected_relationships,
                     search_node=search_node_id,
                     node_positions=node_positions,
@@ -604,50 +739,97 @@ def main():
                     filtered_nodes=filtered_nodes
                 )
 
-            # Apply fixed positions if available
-            for node in net.nodes:
-                pos = st.session_state.node_positions.get(node.get("id"))
-                if pos:
-                    node['x'] = pos['x']
-                    node['y'] = pos['y']
+            if enable_physics:
+                for node in net.nodes:
+                    pos = st.session_state.node_positions.get(node.get("id"))
+                    if pos:
+                        node['x'] = pos['x']
+                        node['y'] = pos['y']
+                        node['fixed'] = True
+                        node['physics'] = False
+            else:
+                net.options = json.loads("""
+                {
+                    "nodes": {
+                        "font": {
+                            "size": 12,
+                            "face": "Arial",
+                            "color": "#343a40",
+                            "strokeWidth": 0
+                        }
+                    },
+                    "edges": {
+                        "font": {
+                            "size": 10,
+                            "face": "Arial",
+                            "align": "middle",
+                            "color": "#343a40"
+                        },
+                        "smooth": {
+                            "type": "continuous"
+                        }
+                    },
+                    "physics": {"enabled": false},
+                    "interaction": {
+                        "hover": true,
+                        "navigationButtons": true,
+                        "zoomView": true,
+                        "dragNodes": false,
+                        "multiselect": true,
+                        "selectConnectedEdges": true
+                    }
+                }
+                """)
+                G = nx.Graph()
+                for node in net.nodes:
+                    G.add_node(node["id"])
+                for edge in net.edges:
+                    G.add_edge(edge["from"], edge["to"])
+                iterations = 20 if len(G.nodes) <= 50 else 50
+                pos = nx.spring_layout(G, k=0.15, iterations=iterations, seed=42)
+                for node in net.nodes:
+                    node_id = node["id"]
+                    if st.session_state.node_positions.get(node_id):
+                        node['x'] = st.session_state.node_positions[node_id]["x"]
+                        node['y'] = st.session_state.node_positions[node_id]["y"]
+                    else:
+                        p = pos[node_id]
+                        node['x'] = p[0] * 500
+                        node['y'] = p[1] * 500
                     node['fixed'] = True
                     node['physics'] = False
-            if not show_labels:
-                for node in net.nodes:
-                    node['label'] = ""
+
+            if len(net.nodes) > 50 and show_labels:
+                st.info("The graph has many nodes, nyah~! Consider toggling 'Show Node Labels' off for better readability.")
 
             try:
                 output_path = "network_graph.html"
                 net.save_graph(output_path)
                 with open(output_path, "r", encoding="utf-8") as f:
                     graph_html = f.read()
-                components.html(graph_html, height=750, scrolling=True)
                 os.remove(output_path)
+                components.html(graph_html, height=750, scrolling=True)
             except Exception as e:
                 st.error(f"Graph generation failed: {e}")
 
-            # Display stats and node metadata
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
             if st.session_state.selected_node:
-                display_node_metadata(st.session_state.selected_node, all_data, id_to_label)
+                display_node_metadata(st.session_state.selected_node, st.session_state.graph_data, st.session_state.id_to_label)
             else:
                 st.markdown("#### Node Metadata")
                 st.info("Click on a node to display its metadata.")
 
-            # Export Options
             st.markdown("### 📥 Export Options")
             col1, col2, col3 = st.columns(3)
             with col1:
-                try:
-                    with open("network_graph.html", "r", encoding="utf-8") as f:
-                        graph_content = f.read()
+                if graph_html:
                     st.download_button(
                         label="Download Graph as HTML",
-                        data=graph_content,
+                        data=graph_html,
                         file_name="network_graph.html",
                         mime="text/html"
                     )
-                except Exception:
+                else:
                     st.info("Please generate the graph first to download.")
             with col2:
                 if st.button("Download Graph as PNG"):
@@ -680,9 +862,6 @@ def main():
     else:
         st.info("🗂️ Upload JSON files containing linked data entities in the sidebar.")
 
-    # -----------------------------------------------------------------------------
-    # Additional CSS Styling
-    # -----------------------------------------------------------------------------
     st.markdown(
         """
         <style>
@@ -707,7 +886,6 @@ def main():
         </style>
         """, unsafe_allow_html=True
     )
-
 
 if __name__ == "__main__":
     main()

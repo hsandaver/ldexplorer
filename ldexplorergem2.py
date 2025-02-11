@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """
 Complete Python Network Visualization Application with Enhancements
-Author: Huw Sandaver / ChatGPT
-Date: 2025-02-09
+Including real SPARQL query support by converting JSON to RDF, nyah~!
+Author: Huw Sandaver with contributions from ChatGPT
+Date: 2025-02-09 (Enhanced: 2025-02-11)
 """
 
 import os
@@ -19,7 +20,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
-from rdflib import Graph as RDFGraph, URIRef, Literal
+from rdflib import Graph as RDFGraph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS
 import networkx as nx
 from concurrent.futures import ThreadPoolExecutor
@@ -30,7 +31,6 @@ from functools import lru_cache, wraps
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 
-
 # -----------------------------------------------------------------------------
 # Data Classes
 # -----------------------------------------------------------------------------
@@ -40,7 +40,6 @@ class Edge:
     target: str
     relationship: str
 
-
 @dataclass
 class Node:
     id: str
@@ -49,11 +48,9 @@ class Node:
     metadata: Dict[str, Any]
     edges: List[Edge] = field(default_factory=list)
 
-
 @dataclass
 class GraphData:
     nodes: List[Node]
-
 
 # -----------------------------------------------------------------------------
 # Configuration Constants
@@ -111,6 +108,8 @@ NODE_TYPE_SHAPES: Dict[str, str] = {
 
 DEFAULT_NODE_COLOR = "#D3D3D3"
 
+# Define a custom namespace for our RDF properties
+EX = Namespace("http://example.org/")
 
 # -----------------------------------------------------------------------------
 # Performance Monitoring Decorator
@@ -126,14 +125,12 @@ def performance_monitor(func):
         return result
     return wrapper
 
-
 # -----------------------------------------------------------------------------
 # Utility Functions
 # -----------------------------------------------------------------------------
 def log_error(message: str) -> None:
     """Modular error logging."""
     logging.error(message)
-
 
 def remove_fragment(uri: str) -> str:
     """Remove the fragment (e.g., #something) from a URI."""
@@ -143,7 +140,6 @@ def remove_fragment(uri: str) -> str:
     except Exception as e:
         log_error(f"Error removing fragment from {uri}: {e}")
         return uri
-
 
 def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -187,7 +183,6 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 logging.debug(f"Normalized relationship '{rel}': {data['id']} -> {normalized_id}")
         data[rel] = normalized_values
     return data
-
 
 # -----------------------------------------------------------------------------
 # Data Caching: Parse Entities from File Contents
@@ -239,6 +234,57 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
             log_error(err)
     return GraphData(nodes=nodes), id_to_label, errors
 
+# -----------------------------------------------------------------------------
+# RDF Conversion and SPARQL Querying Helpers
+# -----------------------------------------------------------------------------
+def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
+    """
+    Convert GraphData (parsed JSON entities) to an RDF graph.
+    nyah~ Each entity becomes a subject and we add triples for labels, types, and relationships.
+    """
+    g = RDFGraph()
+    g.bind("ex", EX)
+    for node in graph_data.nodes:
+        subject = URIRef(node.id)
+        # Add label triple
+        label = node.metadata.get("prefLabel", {}).get("en", node.id)
+        g.add((subject, RDFS.label, Literal(label, lang="en")))
+        # Add type triples
+        for t in node.types:
+            g.add((subject, RDF.type, EX[t]))
+        # Add other properties as literals (skip id, prefLabel, type)
+        for key, value in node.metadata.items():
+            if key in ("id", "prefLabel", "type"):
+                continue
+            # For relationships already handled, add as URIRefs if key is in RELATIONSHIP_CONFIG
+            if key in RELATIONSHIP_CONFIG:
+                if not isinstance(value, list):
+                    value = [value]
+                for v in value:
+                    g.add((subject, EX[key], URIRef(v)))
+            else:
+                # Otherwise add as literal
+                if isinstance(value, str):
+                    g.add((subject, EX[key], Literal(value)))
+                elif isinstance(value, list):
+                    for v in value:
+                        g.add((subject, EX[key], Literal(v)))
+                else:
+                    g.add((subject, EX[key], Literal(value)))
+        # Also add triples for explicit edges if missing
+        for edge in node.edges:
+            g.add((subject, EX[edge.relationship], URIRef(edge.target)))
+    return g
+
+def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
+    """
+    Run a SPARQL SELECT query against the RDF graph.
+    Uses the initNs parameter to bind the 'rdf' and 'ex' prefixes, nyah~!
+    Returns a set of subject URIs (as strings) from the first variable.
+    """
+    result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
+    nodes = {str(row[0]) for row in result if row[0] is not None}
+    return nodes
 
 # -----------------------------------------------------------------------------
 # Graph Building Helpers
@@ -276,7 +322,6 @@ def add_node(net: Network, node_id: str, label: str, entity_types: List[str], co
     )
     logging.debug(f"Added node: {label} ({node_id}) with color {color} and shape {NODE_TYPE_SHAPES.get(entity_types[0], 'dot')}")
 
-
 def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: Dict[str, str],
              search_node: Optional[str] = None) -> None:
     """Helper to add an edge to the Pyvis network with enhanced styling."""
@@ -295,7 +340,6 @@ def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: D
         smooth={'enabled': True, 'type': 'continuous'}
     )
     logging.debug(f"Added edge: {src} --{label_text}--> {dst}")
-
 
 def build_graph(
     graph_data: GraphData,
@@ -405,7 +449,6 @@ def build_graph(
     """)
     return net
 
-
 def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[str, str]) -> str:
     """Generate an HTML legend for relationship types and node types."""
     relationship_items = "".join(
@@ -427,7 +470,6 @@ def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[s
         f"</ul>"
         f"</div>"
     )
-
 
 def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict[str, str]) -> None:
     """Display metadata for a given node in Streamlit."""
@@ -456,7 +498,6 @@ def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict
                     st.write(f"  - {value}")
     else:
         st.write("No metadata available for this node.")
-
 
 # -----------------------------------------------------------------------------
 # Main Streamlit App
@@ -534,6 +575,10 @@ def main() -> None:
                 st.session_state.id_to_label = {}
     else:
         st.info("🗂️ Upload JSON files containing linked data entities in the sidebar.")
+
+    # Convert GraphData to RDF for SPARQL querying
+    if st.session_state.graph_data.nodes:
+        st.session_state.rdf_graph = convert_graph_data_to_rdf(st.session_state.graph_data)
 
     # Sidebar: Relationship Filtering
     selected_relationships = st.sidebar.multiselect(
@@ -653,6 +698,7 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # Other Controls (Filtering, Search, Manual Positioning)
     # -------------------------------------------------------------------------
+    filtered_nodes: Optional[Set[str]] = None
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
         filtered_types = st.sidebar.multiselect(
@@ -672,15 +718,24 @@ def main() -> None:
     st.session_state.search_term = search_term
 
     sparql_query_input = st.sidebar.text_area(
-        label="SPARQL-like Query",
+        label="SPARQL Query",
         help=(
-            "Enter a SPARQL-like query to filter nodes. Example:\n"
-            "```\nSELECT ?s WHERE {?s rdf:type <http://example.org/Person> .}\n```"
+            "Enter a SPARQL SELECT query to filter nodes. For example:\n"
+            "```\nSELECT ?s WHERE { ?s rdf:type ex:Person . }\n```"
         ),
         key="sparql_query_control",
         value=st.session_state.sparql_query
     )
     st.session_state.sparql_query = sparql_query_input
+
+    # Use real SPARQL query if provided
+    if sparql_query_input.strip():
+        try:
+            filtered_nodes = run_sparql_query(sparql_query_input, st.session_state.rdf_graph)
+            st.sidebar.info(f"SPARQL Query returned {len(filtered_nodes)} nodes, nyah~!")
+        except Exception as e:
+            st.sidebar.error(f"SPARQL Query failed: {e}")
+            filtered_nodes = None
 
     show_labels = st.sidebar.checkbox(
         label="Show Node Labels",
@@ -689,6 +744,12 @@ def main() -> None:
         key="show_labels_control"
     )
     st.session_state.show_labels = show_labels
+
+    # Further filter by entity types if set
+    if st.session_state.filtered_types:
+        filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
+                            if any(t in st.session_state.filtered_types for t in node.types)}
+        filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
 
     st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
 
@@ -728,37 +789,14 @@ def main() -> None:
 
     graph_html = None
     if st.session_state.graph_data.nodes:
-        filtered_nodes: Optional[Set[str]] = None
-        if sparql_query_input.strip():
-            filtered_nodes = {node.id for node in st.session_state.graph_data.nodes if sparql_query_input in node.metadata.get("type", [])}
-        if st.session_state.filtered_types:
-            filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
-                                if any(t in st.session_state.filtered_types for t in node.types)}
-            filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
-
-        search_node_id: Optional[str] = None
-        if search_term.strip():
-            for node in st.session_state.graph_data.nodes:
-                if node.label.lower() == search_term.lower():
-                    search_node_id = node.id
-                    break
-            if not search_node_id:
-                for node_id, label in st.session_state.id_to_label.items():
-                    if label.lower() == search_term.lower():
-                        search_node_id = node_id
-                        break
-            if not search_node_id:
-                st.sidebar.warning("Node not found. Please check the name and try again.")
-
-        node_positions = st.session_state.node_positions or None
-
         with st.spinner("Generating Network Graph..."):
             net = build_graph(
                 graph_data=st.session_state.graph_data,
                 id_to_label=st.session_state.id_to_label,
                 selected_relationships=st.session_state.selected_relationships,
-                search_node=search_node_id,
-                node_positions=node_positions,
+                search_node=next((node.id for node in st.session_state.graph_data.nodes 
+                                  if node.label.lower() == search_term.lower()), None),
+                node_positions=st.session_state.node_positions,
                 show_labels=show_labels,
                 filtered_nodes=filtered_nodes,
                 dark_mode=dark_mode
@@ -772,7 +810,6 @@ def main() -> None:
                     node['x'] = pos['x']
                     node['y'] = pos['y']
                     node['fixed'] = True
-                    # Do not disable physics; let simulation run on nodes without manual positions.
         else:
             if isinstance(net.options, dict):
                 net.options["physics"]["enabled"] = False
@@ -916,7 +953,6 @@ def main() -> None:
         </style>
         """, unsafe_allow_html=True
     )
-
 
 if __name__ == "__main__":
     main()

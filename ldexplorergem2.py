@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
 Complete Python Network Visualization Application with Enhancements
-Including real SPARQL query support by converting JSON to RDF.
+Including real SPARQL query support by converting JSON to RDF and a map visualization for Place entities.
 Author: Huw Sandaver w/ enhancements by ChatGPT
 Date: 2025-02-09 (Enhanced: 2025-02-11)
 """
@@ -23,6 +23,7 @@ from pyvis.network import Network
 from rdflib import Graph as RDFGraph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS
 import networkx as nx
+import pandas as pd  # For map visualization
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, wraps
 
@@ -844,6 +845,57 @@ def main() -> None:
             st.markdown("#### Node Metadata")
             st.info("Click on a node to display its metadata.")
 
+        # ---------------------------------------------------------------------
+        # Map Visualization Enhancement for Entities with Coordinates
+        # ---------------------------------------------------------------------
+        place_locations = []
+        for node in st.session_state.graph_data.nodes:
+            # Debug: log the keys in each node's metadata
+            logging.info(f"Processing node {node.id} for map view. Metadata keys: {list(node.metadata.keys())}")
+            # Check if the node has a "geographicCoordinates" key
+            if "geographicCoordinates" in node.metadata:
+                coords = node.metadata["geographicCoordinates"]
+                logging.info(f"Node {node.id} has geographicCoordinates: {coords}")
+                if isinstance(coords, list):
+                    coords = coords[0]
+                if isinstance(coords, str) and coords.startswith("Point(") and coords.endswith(")"):
+                    coords = coords[6:-1].strip()  # Remove 'Point(' and ')'
+                    parts = coords.split()
+                    if len(parts) == 2:
+                        try:
+                            # In WKT, the format is usually "longitude latitude"
+                            lon, lat = map(float, parts)
+                            place_locations.append({
+                                "lat": lat,
+                                "lon": lon,
+                                "label": node.label
+                            })
+                        except ValueError:
+                            logging.error(f"Invalid coordinates for node {node.id}: {coords}")
+            # Fallback: check for separate latitude and longitude fields
+            elif "latitude" in node.metadata and "longitude" in node.metadata:
+                lat = node.metadata.get("latitude")
+                lon = node.metadata.get("longitude")
+                logging.info(f"Node {node.id} has separate lat/lon: {lat}, {lon}")
+                if lat is not None and lon is not None:
+                    try:
+                        place_locations.append({
+                            "lat": float(lat),
+                            "lon": float(lon),
+                            "label": node.label
+                        })
+                    except ValueError:
+                        logging.error(f"Invalid numeric coordinates for node {node.id}: {lat}, {lon}")
+        if place_locations:
+            st.subheader("Map View of Entities with Coordinates")
+            df_places = pd.DataFrame(place_locations)
+            st.map(df_places)
+        else:
+            st.info("No entities with valid coordinates found for the map view.")
+
+        # ---------------------------------------------------------------------
+        # Export Options
+        # ---------------------------------------------------------------------
         st.markdown("### 📥 Export Options")
         col1, col2, col3 = st.columns(3)
         with col1:

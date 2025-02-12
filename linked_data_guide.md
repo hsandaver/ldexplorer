@@ -19,7 +19,7 @@ On the left sidebar (the control panel), you’ll find an option to upload JSON 
 - **What Are JSON Files?**  
 JSON (JavaScript Object Notation) is a structured, human-readable format used to store and exchange data between systems. It represents data as key-value pairs, making it ideal for describing objects, arrays, and nested structures.  
 
-In the context of this app, JSON files describe items (like people or organizations) and define how they are related to each other.
+In the context of this app, JSON files describe items (like people or organizations) and define how they are related to each other. There is some sample data provided. Download the sample.zip file. On Windows double click on the file then choose "extract all" to unzip the JSON files
 
 - **How to Upload:**  
 Click the “Upload JSON Files” button and select the files saved on your computer.

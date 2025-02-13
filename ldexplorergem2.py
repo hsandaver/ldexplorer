@@ -3,8 +3,8 @@
 Complete Python Network Visualization Application with Enhancements
 Including real SPARQL query support by converting JSON to RDF, a map visualization for Place entities,
 and an embedded Mirador IIIF viewer for still images (with dynamic manifest URL).
-Author: Huw Sandaver w/ enhancements by ChatGPT
-Date: 2025-02-09 (Enhanced: 2025-02-11, IIIF Enhancement: 2025-02-13)
+Author: Huw Sandaver w/ enhancements by ChatGPT and Mochi
+Date: 2025-02-09 (Enhanced: 2025-02-11, IIIF Enhancement: 2025-02-13, Physics Settings: 2025-02-13)
 """
 
 import os
@@ -349,11 +349,12 @@ def build_graph(
         bgcolor="#f0f2f6" if not dark_mode else "#2c2f33",
         font_color="#343a40" if not dark_mode else "#ffffff"
     )
+    # Use the physics settings from session_state
     net.force_atlas_2based(
-        gravity=-50,
-        central_gravity=0.01,
-        spring_length=150,
-        spring_strength=0.08
+        gravity=st.session_state.physics_params.get("gravity", -50),
+        central_gravity=st.session_state.physics_params.get("centralGravity", 0.01),
+        spring_length=st.session_state.physics_params.get("springLength", 150),
+        spring_strength=st.session_state.physics_params.get("springStrength", 0.08)
     )
 
     added_nodes: Set[str] = set()
@@ -412,10 +413,10 @@ def build_graph(
         }},
         "physics": {{
             "forceAtlas2Based": {{
-                "gravity": -50,
-                "centralGravity": 0.01,
-                "springLength": 150,
-                "springStrength": 0.08
+                "gravity": {st.session_state.physics_params.get("gravity", -50)},
+                "centralGravity": {st.session_state.physics_params.get("centralGravity", 0.01)},
+                "springLength": {st.session_state.physics_params.get("springLength", 150)},
+                "springStrength": {st.session_state.physics_params.get("springStrength", 0.08)}
             }},
             "minVelocity": 0.75,
             "solver": "forceAtlas2Based"
@@ -519,54 +520,71 @@ def main() -> None:
         st.session_state.graph_data = GraphData(nodes=[])
     if "id_to_label" not in st.session_state:
         st.session_state.id_to_label = {}
+    if "physics_params" not in st.session_state:
+        st.session_state.physics_params = {
+            "gravity": -50,
+            "centralGravity": 0.01,
+            "springLength": 150,
+            "springStrength": 0.08
+        }
 
-    if uploaded_files:
-        file_contents = []
-        for file in uploaded_files:
-            try:
-                content = file.read().decode("utf-8")
-                file_contents.append(content)
-            except Exception as e:
-                st.sidebar.error(f"Error reading file {file.name}: {e}")
-        if file_contents:
-            try:
-                graph_data, id_to_label, errors = parse_entities_from_contents(file_contents)
-                st.session_state.graph_data = graph_data
-                st.session_state.id_to_label = id_to_label
-                if errors:
-                    with st.expander("⚠️ Parsing Errors"):
-                        for err in errors:
-                            st.error(err)
-            except Exception as e:
-                st.sidebar.error(f"Error parsing files: {e}")
-                st.session_state.graph_data = GraphData(nodes=[])
-                st.session_state.id_to_label = {}
-    else:
-        st.info("🗂️ Upload JSON files containing linked data entities in the sidebar.")
+    # ---------------------------
+    # Physics Settings
+    # ---------------------------
+    with st.sidebar.expander("Physics Settings"):
+        st.session_state.physics_params["gravity"] = st.number_input(
+            "Gravity", value=st.session_state.physics_params["gravity"], step=1.0, key="gravity_input"
+        )
+        st.session_state.physics_params["centralGravity"] = st.number_input(
+            "Central Gravity", value=st.session_state.physics_params["centralGravity"], step=0.01, key="centralGravity_input"
+        )
+        st.session_state.physics_params["springLength"] = st.number_input(
+            "Spring Length", value=st.session_state.physics_params["springLength"], step=1.0, key="springLength_input"
+        )
+        st.session_state.physics_params["springStrength"] = st.number_input(
+            "Spring Strength", value=st.session_state.physics_params["springStrength"], step=0.01, key="springStrength_input"
+        )
 
-    if st.session_state.graph_data.nodes:
-        st.session_state.rdf_graph = convert_graph_data_to_rdf(st.session_state.graph_data)
+    # ---------------------------
+    # Graph Settings: Save & Upload
+    # ---------------------------
+    st.sidebar.header("⚙️ Graph Settings")
+    graph_settings_file = st.sidebar.file_uploader("Upload Graph Settings", type=["json"], key="graph_settings_file")
+    if graph_settings_file is not None:
+        try:
+            settings_str = graph_settings_file.read().decode("utf-8")
+            settings_json = json.loads(settings_str)
+            st.session_state.node_positions = settings_json.get("node_positions", st.session_state.node_positions)
+            st.session_state.selected_relationships = settings_json.get("selected_relationships", st.session_state.selected_relationships)
+            st.session_state.enable_physics = settings_json.get("enable_physics", st.session_state.enable_physics)
+            st.session_state.filtered_types = settings_json.get("filtered_types", st.session_state.filtered_types)
+            st.session_state.search_term = settings_json.get("search_term", st.session_state.search_term)
+            st.session_state.show_labels = settings_json.get("show_labels", st.session_state.show_labels)
+            st.session_state.physics_params = settings_json.get("physics_params", st.session_state.physics_params)
+            st.sidebar.success("Graph settings uploaded successfully!")
+        except Exception as e:
+            st.sidebar.error(f"Error loading graph settings: {e}")
 
-    selected_relationships = st.sidebar.multiselect(
-        label="Select Relationship Types to Display",
-        options=list(RELATIONSHIP_CONFIG.keys()),
-        default=st.session_state.selected_relationships,
-        key="selected_relationships_control"
+    graph_settings = {
+        "node_positions": st.session_state.node_positions,
+        "selected_relationships": st.session_state.selected_relationships,
+        "enable_physics": st.session_state.enable_physics,
+        "filtered_types": st.session_state.filtered_types,
+        "search_term": st.session_state.search_term,
+        "show_labels": st.session_state.show_labels,
+        "physics_params": st.session_state.physics_params,
+    }
+    settings_json_str = json.dumps(graph_settings, indent=2)
+    st.sidebar.download_button(
+        label="Download Graph Settings",
+        data=settings_json_str,
+        file_name="graph_settings.json",
+        mime="application/json"
     )
-    st.session_state.selected_relationships = selected_relationships
 
-    enable_physics = st.sidebar.checkbox(
-        label="Enable Physics Simulation",
-        value=st.session_state.enable_physics,
-        help="Toggle physics simulation on/off. Off will use a static layout.",
-        key="enable_physics_control"
-    )
-    st.session_state.enable_physics = enable_physics
-
-    if st.sidebar.button("Reset Manual Node Positions"):
-        st.session_state.node_positions = {}
-        st.sidebar.success("Manual positions have been reset.")
-
+    # ---------------------------
+    # Graph Editing Section
+    # ---------------------------
     st.sidebar.header("✏️ Graph Editing")
     with st.sidebar.expander("Edit Graph"):
         edit_option = st.radio("Select action", ("Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"))
@@ -748,41 +766,6 @@ def main() -> None:
                         f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})"
                     )
 
-    # ---------------------------
-    # Graph Settings: Save & Upload
-    # ---------------------------
-    st.sidebar.header("⚙️ Graph Settings")
-    graph_settings_file = st.sidebar.file_uploader("Upload Graph Settings", type=["json"], key="graph_settings_file")
-    if graph_settings_file is not None:
-        try:
-            settings_str = graph_settings_file.read().decode("utf-8")
-            settings_json = json.loads(settings_str)
-            st.session_state.node_positions = settings_json.get("node_positions", st.session_state.node_positions)
-            st.session_state.selected_relationships = settings_json.get("selected_relationships", st.session_state.selected_relationships)
-            st.session_state.enable_physics = settings_json.get("enable_physics", st.session_state.enable_physics)
-            st.session_state.filtered_types = settings_json.get("filtered_types", st.session_state.filtered_types)
-            st.session_state.search_term = settings_json.get("search_term", st.session_state.search_term)
-            st.session_state.show_labels = settings_json.get("show_labels", st.session_state.show_labels)
-            st.sidebar.success("Graph settings uploaded successfully!")
-        except Exception as e:
-            st.sidebar.error(f"Error loading graph settings: {e}")
-
-    graph_settings = {
-        "node_positions": st.session_state.node_positions,
-        "selected_relationships": st.session_state.selected_relationships,
-        "enable_physics": st.session_state.enable_physics,
-        "filtered_types": st.session_state.filtered_types,
-        "search_term": st.session_state.search_term,
-        "show_labels": st.session_state.show_labels,
-    }
-    settings_json_str = json.dumps(graph_settings, indent=2)
-    st.sidebar.download_button(
-        label="Download Graph Settings",
-        data=settings_json_str,
-        file_name="graph_settings.json",
-        mime="application/json"
-    )
-
     graph_html = None
     if st.session_state.graph_data.nodes:
         with st.spinner("Generating Network Graph..."):
@@ -798,7 +781,7 @@ def main() -> None:
                 dark_mode=dark_mode
             )
 
-        if enable_physics:
+        if st.session_state.enable_physics:
             for node in net.nodes:
                 pos = st.session_state.node_positions.get(node.get("id"))
                 if pos:

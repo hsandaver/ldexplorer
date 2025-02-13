@@ -533,16 +533,28 @@ def main() -> None:
     # ---------------------------
     with st.sidebar.expander("Physics Settings"):
         st.session_state.physics_params["gravity"] = st.number_input(
-            "Gravity", value=st.session_state.physics_params["gravity"], step=1.0, key="gravity_input"
+            "Gravity",
+            value=float(st.session_state.physics_params["gravity"]),
+            step=1.0,
+            key="gravity_input"
         )
         st.session_state.physics_params["centralGravity"] = st.number_input(
-            "Central Gravity", value=st.session_state.physics_params["centralGravity"], step=0.01, key="centralGravity_input"
+            "Central Gravity",
+            value=st.session_state.physics_params["centralGravity"],
+            step=0.01,
+            key="centralGravity_input"
         )
         st.session_state.physics_params["springLength"] = st.number_input(
-            "Spring Length", value=st.session_state.physics_params["springLength"], step=1.0, key="springLength_input"
+            "Spring Length",
+            value=float(st.session_state.physics_params["springLength"]),
+            step=1.0,
+            key="springLength_input"
         )
         st.session_state.physics_params["springStrength"] = st.number_input(
-            "Spring Strength", value=st.session_state.physics_params["springStrength"], step=0.01, key="springStrength_input"
+            "Spring Strength",
+            value=st.session_state.physics_params["springStrength"],
+            step=0.01,
+            key="springStrength_input"
         )
 
     # ---------------------------

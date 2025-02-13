@@ -607,6 +607,46 @@ def main() -> None:
     )
 
     # ---------------------------
+    # Graph Data Loader: Load Nodes & Edges
+    # ---------------------------
+    st.sidebar.header("📂 Load Graph Data")
+    graph_data_file = st.sidebar.file_uploader("Upload Graph Data JSON", type=["json"], key="graph_data_file")
+    if graph_data_file is not None:
+        try:
+            graph_data_str = graph_data_file.read().decode("utf-8")
+            graph_data_json = json.loads(graph_data_str)
+            nodes = []
+            id_to_label = {}
+            # Reconstruct nodes from the JSON file
+            for node_dict in graph_data_json.get("nodes", []):
+                node_obj = Node(
+                    id=node_dict.get("id"),
+                    label=node_dict.get("label"),
+                    types=["Unknown"],  # Default type, since type info isn't saved in the download
+                    metadata=node_dict.get("metadata", {}),
+                    edges=[]
+                )
+                nodes.append(node_obj)
+                id_to_label[node_obj.id] = node_obj.label
+
+            # Reconstruct edges from the JSON file and attach them to the corresponding nodes
+            for edge_dict in graph_data_json.get("edges", []):
+                src = edge_dict.get("from")
+                dst = edge_dict.get("to")
+                relationship = edge_dict.get("label", "related")
+                new_edge = Edge(source=src, target=dst, relationship=relationship)
+                for node in nodes:
+                    if node.id == src:
+                        node.edges.append(new_edge)
+                        break
+
+            st.session_state.graph_data = GraphData(nodes=nodes)
+            st.session_state.id_to_label = id_to_label
+            st.sidebar.success("Graph data loaded successfully!")
+        except Exception as e:
+            st.sidebar.error(f"Error loading graph data: {e}")
+
+    # ---------------------------
     # Graph Editing Section
     # ---------------------------
     st.sidebar.header("✏️ Graph Editing")

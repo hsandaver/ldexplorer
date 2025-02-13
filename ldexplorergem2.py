@@ -497,6 +497,18 @@ def main() -> None:
         help="Select JSON files describing entities and relationships"
     )
 
+    # --- NEW CODE START ---
+    if uploaded_files:
+        file_contents = [uploaded_file.read().decode("utf-8") for uploaded_file in uploaded_files]
+        graph_data, id_to_label, errors = parse_entities_from_contents(file_contents)
+        st.session_state.graph_data = graph_data
+        st.session_state.id_to_label = id_to_label
+        st.session_state.rdf_graph = convert_graph_data_to_rdf(graph_data)
+        if errors:
+            for error in errors:
+                st.error(error)
+    # --- NEW CODE END ---
+
     dark_mode = st.sidebar.checkbox("Dark Mode", value=False, key="dark_mode")
     community_detection = st.sidebar.checkbox("Enable Community Detection", value=False, key="community_detection")
 

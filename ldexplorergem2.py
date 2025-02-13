@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """
 Complete Python Network Visualization Application with Enhancements
-Including real SPARQL query support by converting JSON to RDF and a map visualization for Place entities.
+Including real SPARQL query support by converting JSON to RDF, a map visualization for Place entities,
+and an embedded Mirador IIIF viewer for still images (with dynamic manifest URL).
 Author: Huw Sandaver w/ enhancements by ChatGPT
-Date: 2025-02-09 (Enhanced: 2025-02-11)
+Date: 2025-02-09 (Enhanced: 2025-02-11, IIIF Enhancement: 2025-02-13)
 """
 
 import os
@@ -25,7 +26,7 @@ from rdflib.namespace import RDF, RDFS
 import networkx as nx
 import pandas as pd  # For map visualization
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache, wraps
+from functools import wraps
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
@@ -74,7 +75,6 @@ RELATIONSHIP_CONFIG: Dict[str, str] = {
     "creator": "#FF1493",
     "contributor": "#98FB98",
     "associatedWith": "#DDA0DD",
-    # NEW RELATIONSHIPS
     "sameAs": "#A0522D",
     "child": "#1E90FF",
     "sibling": "#556B2F",
@@ -83,7 +83,7 @@ RELATIONSHIP_CONFIG: Dict[str, str] = {
     "employedBy": "#B8860B",
     "occupation": "#8FBC8F",
     "fieldOfActivity": "#FF4500",
-    "educatedAt": "#8B4513",  # NEW relationship type
+    "educatedAt": "#8B4513",
     "foundedBy": "#FF6347"
 }
 
@@ -143,13 +143,13 @@ def remove_fragment(uri: str) -> str:
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     if isinstance(value, dict):
-        if rel in {"spouse", "studentOf", "employedBy", "educatedAt"}:
+        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman"}:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
         elif rel == 'succeededBy':
             return remove_fragment(value.get('resultedIn', ''))
         elif rel == 'precededBy':
             return remove_fragment(value.get('resultedFrom', ''))
-        elif rel == "foundedBy":  # Updated handling for foundedBy
+        elif rel == "foundedBy":
             return remove_fragment(value.get('carriedOutBy', value.get('founder', value.get('id', ''))))
         else:
             return remove_fragment(value.get('id', ''))
@@ -850,9 +850,7 @@ def main() -> None:
         # ---------------------------------------------------------------------
         place_locations = []
         for node in st.session_state.graph_data.nodes:
-            # Debug: log the keys in each node's metadata
             logging.info(f"Processing node {node.id} for map view. Metadata keys: {list(node.metadata.keys())}")
-            # Check if the node has a "geographicCoordinates" key
             if "geographicCoordinates" in node.metadata:
                 coords = node.metadata["geographicCoordinates"]
                 logging.info(f"Node {node.id} has geographicCoordinates: {coords}")
@@ -863,7 +861,6 @@ def main() -> None:
                     parts = coords.split()
                     if len(parts) == 2:
                         try:
-                            # In WKT, the format is usually "longitude latitude"
                             lon, lat = map(float, parts)
                             place_locations.append({
                                 "lat": lat,
@@ -872,7 +869,6 @@ def main() -> None:
                             })
                         except ValueError:
                             logging.error(f"Invalid coordinates for node {node.id}: {coords}")
-            # Fallback: check for separate latitude and longitude fields
             elif "latitude" in node.metadata and "longitude" in node.metadata:
                 lat = node.metadata.get("latitude")
                 lon = node.metadata.get("longitude")
@@ -892,6 +888,49 @@ def main() -> None:
             st.map(df_places)
         else:
             st.info("No entities with valid coordinates found for the map view.")
+
+        # ---------------------------------------------------------------------
+        # IIIF Viewer Enhancement: Embed Mirador with Dynamic Manifest URL
+        # ---------------------------------------------------------------------
+        st.subheader("IIIF Viewer")
+        # Look for StillImage nodes that have an 'image' field (assumed to be the IIIF manifest URL)
+        iiif_nodes = [node for node in st.session_state.graph_data.nodes if "StillImage" in node.types and "image" in node.metadata]
+        if iiif_nodes:
+            selected_iiif = st.selectbox(
+                "Select a StillImage for IIIF Viewer",
+                options=[node.id for node in iiif_nodes],
+                format_func=lambda x: st.session_state.id_to_label.get(x, x)
+            )
+            selected_node = next((node for node in iiif_nodes if node.id == selected_iiif), None)
+            if selected_node:
+                manifest_url = selected_node.metadata.get("image")
+                # If the manifest URL is a list, take the first element
+                if isinstance(manifest_url, list):
+                    manifest_url = manifest_url[0]
+                # Strip out the hard-coded prefix if present
+                prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
+                if manifest_url.startswith(prefix):
+                    manifest_url = manifest_url[len(prefix):]
+                html_code = f'''
+<html>
+  <head>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/mirador/dist/css/mirador.min.css">
+    <script src="https://unpkg.com/mirador/dist/mirador.min.js"></script>
+  </head>
+  <body>
+    <div id="mirador-viewer" style="height: 600px;"></div>
+    <script>
+      Mirador.viewer({{
+        id: 'mirador-viewer',
+        windows: [{{ loadedManifest: '{manifest_url}' }}]
+      }});
+    </script>
+  </body>
+</html>
+'''
+                components.html(html_code, height=650)
+        else:
+            st.info("No StillImage entity with a manifest found.")
 
         # ---------------------------------------------------------------------
         # Export Options

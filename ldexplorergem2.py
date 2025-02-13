@@ -652,7 +652,6 @@ def main() -> None:
         elif edit_option == "Delete Node":
             node_ids = [node.id for node in nodes_list]
             if node_ids:
-                # Pre-select the current node if available
                 default_index = node_ids.index(st.session_state.selected_node) if st.session_state.selected_node in node_ids else 0
                 node_to_delete = st.selectbox("Select Node to Delete", node_ids, index=default_index)
                 if st.button("Delete Node"):
@@ -747,7 +746,7 @@ def main() -> None:
                         st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
                         st.sidebar.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
     
-    # Relationship filtering using a searchable multiselect
+    # ------------------ Filter by Entity Types ------------------
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
         st.session_state.filtered_types = st.sidebar.multiselect(
@@ -756,6 +755,7 @@ def main() -> None:
             default=st.session_state.filtered_types,
             key="filtered_types_control"
         )
+    
     st.session_state.search_term = st.sidebar.text_input(
         label="Search for a Node",
         help="Enter the entity name to highlight",
@@ -782,7 +782,12 @@ def main() -> None:
     else:
         filtered_nodes = None
 
-    # Display legends
+    # <-- FIX: Apply filtering by selected entity types -->
+    if st.session_state.filtered_types:
+        filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
+                            if any(t in st.session_state.filtered_types for t in node.types)}
+        filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
+
     st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
     
     # -----------------------------------------------------------------------------

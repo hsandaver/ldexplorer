@@ -711,6 +711,9 @@ def main() -> None:
 
     st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
 
+    # ---------------------------
+    # Manual Node Positioning
+    # ---------------------------
     st.sidebar.header("📍 Manual Node Positioning")
     if st.session_state.graph_data.nodes:
         unique_nodes: Dict[str, str] = {node.id: node.label for node in st.session_state.graph_data.nodes}
@@ -744,6 +747,41 @@ def main() -> None:
                     st.sidebar.success(
                         f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})"
                     )
+
+    # ---------------------------
+    # Graph Settings: Save & Upload
+    # ---------------------------
+    st.sidebar.header("⚙️ Graph Settings")
+    graph_settings_file = st.sidebar.file_uploader("Upload Graph Settings", type=["json"], key="graph_settings_file")
+    if graph_settings_file is not None:
+        try:
+            settings_str = graph_settings_file.read().decode("utf-8")
+            settings_json = json.loads(settings_str)
+            st.session_state.node_positions = settings_json.get("node_positions", st.session_state.node_positions)
+            st.session_state.selected_relationships = settings_json.get("selected_relationships", st.session_state.selected_relationships)
+            st.session_state.enable_physics = settings_json.get("enable_physics", st.session_state.enable_physics)
+            st.session_state.filtered_types = settings_json.get("filtered_types", st.session_state.filtered_types)
+            st.session_state.search_term = settings_json.get("search_term", st.session_state.search_term)
+            st.session_state.show_labels = settings_json.get("show_labels", st.session_state.show_labels)
+            st.sidebar.success("Graph settings uploaded successfully!")
+        except Exception as e:
+            st.sidebar.error(f"Error loading graph settings: {e}")
+
+    graph_settings = {
+        "node_positions": st.session_state.node_positions,
+        "selected_relationships": st.session_state.selected_relationships,
+        "enable_physics": st.session_state.enable_physics,
+        "filtered_types": st.session_state.filtered_types,
+        "search_term": st.session_state.search_term,
+        "show_labels": st.session_state.show_labels,
+    }
+    settings_json_str = json.dumps(graph_settings, indent=2)
+    st.sidebar.download_button(
+        label="Download Graph Settings",
+        data=settings_json_str,
+        file_name="graph_settings.json",
+        mime="application/json"
+    )
 
     graph_html = None
     if st.session_state.graph_data.nodes:

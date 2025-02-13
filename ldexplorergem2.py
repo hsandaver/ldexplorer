@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-Complete Python Network Visualization Application with Enhancements
-Including real SPARQL query support by converting JSON to RDF, a map visualization for Place entities,
-and an embedded Mirador IIIF viewer for still images (with dynamic manifest URL).
-Author: Huw Sandaver w/ enhancements by ChatGPT and Mochi
-Date: 2025-02-09 (Enhanced: 2025-02-11, IIIF Enhancement: 2025-02-13, Physics Settings: 2025-02-13)
+Enhanced Linked Data Network Visualization Application
+Incorporates improvements in UI/UX, including a tabbed interface, grouped sidebar controls,
+dark mode enhancements, improved SPARQL feedback, and better graph editing.
+Author: Huw Sandaver (Original) | Enhancements by ChatGPT and Mochi
+Date: 2025-02-14
 """
 
 import os
@@ -15,7 +15,7 @@ import time
 from io import StringIO
 from urllib.parse import urlparse, urlunparse
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple, Set, Union
+from typing import List, Dict, Any, Optional, Tuple, Set
 
 import requests
 import streamlit as st
@@ -24,7 +24,7 @@ from pyvis.network import Network
 from rdflib import Graph as RDFGraph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS
 import networkx as nx
-import pandas as pd  # For map visualization
+import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 
@@ -47,7 +47,7 @@ class Node:
     id: str
     label: str
     types: List[str]
-    metadata: Any  # Allow any type, since metadata might not be a dict
+    metadata: Any  # metadata might not always be a dict
     edges: List[Edge] = field(default_factory=list)
 
 @dataclass
@@ -55,7 +55,7 @@ class GraphData:
     nodes: List[Node]
 
 # -----------------------------------------------------------------------------
-# Configuration Constants
+# Configuration Constants (Consider moving these to a separate config.py for maintainability)
 # -----------------------------------------------------------------------------
 RELATIONSHIP_CONFIG: Dict[str, str] = {
     "relatedPerson": "#7289DA",
@@ -108,14 +108,13 @@ NODE_TYPE_SHAPES: Dict[str, str] = {
 }
 
 DEFAULT_NODE_COLOR = "#D3D3D3"
-
-# Define a custom namespace for our RDF properties
-EX = Namespace("http://example.org/")
+EX = Namespace("http://example.org/")  # Custom namespace for RDF
 
 # -----------------------------------------------------------------------------
 # Performance Monitoring Decorator
 # -----------------------------------------------------------------------------
 def performance_monitor(func):
+    """Decorator to log the performance of functions."""
     @wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -267,7 +266,6 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
 def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
     """
     Run a SPARQL SELECT query against the RDF graph.
-    Uses the initNs parameter to bind the 'rdf' and 'ex' prefixes.
     Returns a set of subject URIs (as strings) from the first variable.
     """
     result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
@@ -281,7 +279,6 @@ def add_node(net: Network, node_id: str, label: str, entity_types: List[str], co
              search_node: Optional[str] = None, show_labels: bool = True) -> None:
     """
     Add a node to the Pyvis network with enhanced aesthetics.
-    The tooltip avoids raw HTML tags and includes the English description if available.
     """
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
     description = ""
@@ -306,7 +303,7 @@ def add_node(net: Network, node_id: str, label: str, entity_types: List[str], co
         shadow=True,
         widthConstraint={"maximum": 150}
     )
-    logging.debug(f"Added node: {label} ({node_id}) with color {color} and shape {NODE_TYPE_SHAPES.get(entity_types[0], 'dot')}")
+    logging.debug(f"Added node: {label} ({node_id}) with color {color}")
 
 def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: Dict[str, str],
              search_node: Optional[str] = None) -> None:
@@ -339,7 +336,6 @@ def build_graph(
 ) -> Network:
     """
     Build and configure the Pyvis graph based on the parsed data.
-    Applies dynamic aesthetic adjustments and community detection.
     """
     net = Network(
         height="750px",
@@ -349,7 +345,7 @@ def build_graph(
         bgcolor="#f0f2f6" if not dark_mode else "#2c2f33",
         font_color="#343a40" if not dark_mode else "#ffffff"
     )
-    # Use the physics settings from session_state
+    # Apply physics settings
     net.force_atlas_2based(
         gravity=st.session_state.physics_params.get("gravity", -50),
         central_gravity=st.session_state.physics_params.get("centralGravity", 0.01),
@@ -456,23 +452,16 @@ def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[s
     )
 
 def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict[str, str]) -> None:
-    """Display metadata for a given node in Streamlit."""
+    """Display metadata for a given node with formatted markdown."""
     st.markdown("#### Node Metadata")
     node_obj = next((node for node in graph_data.nodes if node.id == node_id), None)
-
     if node_obj:
-        st.write(f"**Label:** {id_to_label.get(node_obj.id, node_obj.id)}")
-        # Check if metadata is a dict; if not, display it directly.
+        st.markdown(f"**Label:** {id_to_label.get(node_obj.id, node_obj.id)}")
         if isinstance(node_obj.metadata, dict):
             for key, value in node_obj.metadata.items():
                 if key == 'prefLabel':
                     continue
-                st.write(f"**{key}:**")
-                if isinstance(value, list):
-                    for v in value:
-                        st.write(f"  - {v}")
-                else:
-                    st.write(f"  - {value}")
+                st.markdown(f"**{key}:** {value}")
         else:
             st.write("Metadata:", node_obj.metadata)
     else:
@@ -483,39 +472,8 @@ def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict
 # -----------------------------------------------------------------------------
 def main() -> None:
     st.set_page_config(page_title="Linked Data Explorer", page_icon="🕸️", layout="wide")
-    st.title("🕸️ Linked Data Network Visualizer")
-    st.markdown(
-        """
-        ### Explore Relationships Between Entities
-        Upload multiple JSON files representing entities and generate an interactive network.
-        Use the sidebar to filter relationships, search for nodes, set manual positions,
-        and edit the graph directly.
-        """
-    )
-
-    st.sidebar.header("Controls")
-    uploaded_files = st.sidebar.file_uploader(
-        label="Upload JSON Files",
-        type=["json"],
-        accept_multiple_files=True,
-        help="Select JSON files describing entities and relationships"
-    )
-
-    # --- NEW CODE START ---
-    if uploaded_files:
-        file_contents = [uploaded_file.read().decode("utf-8") for uploaded_file in uploaded_files]
-        graph_data, id_to_label, errors = parse_entities_from_contents(file_contents)
-        st.session_state.graph_data = graph_data
-        st.session_state.id_to_label = id_to_label
-        st.session_state.rdf_graph = convert_graph_data_to_rdf(graph_data)
-        if errors:
-            for error in errors:
-                st.error(error)
-    # --- NEW CODE END ---
-
-    dark_mode = st.sidebar.checkbox("Dark Mode", value=False, key="dark_mode")
-    community_detection = st.sidebar.checkbox("Enable Community Detection", value=False, key="community_detection")
-
+    
+    # Initialize session state variables if not already set
     if "node_positions" not in st.session_state:
         st.session_state.node_positions = {}
     if "selected_node" not in st.session_state:
@@ -543,10 +501,33 @@ def main() -> None:
             "springLength": 150,
             "springStrength": 0.08
         }
-
-    # ---------------------------
-    # Physics Settings
-    # ---------------------------
+        
+    # -----------------------------------------------------------------------------
+    # Sidebar: Grouped Controls with Expanders
+    # -----------------------------------------------------------------------------
+    st.sidebar.header("Controls")
+    
+    with st.sidebar.expander("File Upload"):
+        uploaded_files = st.sidebar.file_uploader(
+            label="Upload JSON Files",
+            type=["json"],
+            accept_multiple_files=True,
+            help="Select JSON files describing entities and relationships"
+        )
+        if uploaded_files:
+            file_contents = [uploaded_file.read().decode("utf-8") for uploaded_file in uploaded_files]
+            graph_data, id_to_label, errors = parse_entities_from_contents(file_contents)
+            st.session_state.graph_data = graph_data
+            st.session_state.id_to_label = id_to_label
+            st.session_state.rdf_graph = convert_graph_data_to_rdf(graph_data)
+            if errors:
+                for error in errors:
+                    st.error(error)
+    
+    with st.sidebar.expander("Appearance & Settings"):
+        dark_mode = st.checkbox("Dark Mode", value=False, key="dark_mode")
+        community_detection = st.checkbox("Enable Community Detection", value=False, key="community_detection")
+    
     with st.sidebar.expander("Physics Settings"):
         st.session_state.physics_params["gravity"] = st.number_input(
             "Gravity",
@@ -572,118 +553,108 @@ def main() -> None:
             step=0.01,
             key="springStrength_input"
         )
-
-    # ---------------------------
-    # Graph Settings: Save & Upload
-    # ---------------------------
-    st.sidebar.header("⚙️ Graph Settings")
-    graph_settings_file = st.sidebar.file_uploader("Upload Graph Settings", type=["json"], key="graph_settings_file")
-    if graph_settings_file is not None:
-        try:
-            settings_str = graph_settings_file.read().decode("utf-8")
-            settings_json = json.loads(settings_str)
-            st.session_state.node_positions = settings_json.get("node_positions", st.session_state.node_positions)
-            st.session_state.selected_relationships = settings_json.get("selected_relationships", st.session_state.selected_relationships)
-            st.session_state.enable_physics = settings_json.get("enable_physics", st.session_state.enable_physics)
-            st.session_state.filtered_types = settings_json.get("filtered_types", st.session_state.filtered_types)
-            st.session_state.search_term = settings_json.get("search_term", st.session_state.search_term)
-            st.session_state.show_labels = settings_json.get("show_labels", st.session_state.show_labels)
-            st.session_state.physics_params = settings_json.get("physics_params", st.session_state.physics_params)
-            st.sidebar.success("Graph settings uploaded successfully!")
-        except Exception as e:
-            st.sidebar.error(f"Error loading graph settings: {e}")
-
-    graph_settings = {
-        "node_positions": st.session_state.node_positions,
-        "selected_relationships": st.session_state.selected_relationships,
-        "enable_physics": st.session_state.enable_physics,
-        "filtered_types": st.session_state.filtered_types,
-        "search_term": st.session_state.search_term,
-        "show_labels": st.session_state.show_labels,
-        "physics_params": st.session_state.physics_params,
-    }
-    settings_json_str = json.dumps(graph_settings, indent=2)
-    st.sidebar.download_button(
-        label="Download Graph Settings",
-        data=settings_json_str,
-        file_name="graph_settings.json",
-        mime="application/json"
-    )
-
-    # ---------------------------
-    # Graph Data Loader: Load Nodes & Edges
-    # ---------------------------
-    st.sidebar.header("📂 Load Graph Data")
-    graph_data_file = st.sidebar.file_uploader("Upload Graph Data JSON", type=["json"], key="graph_data_file")
-    if graph_data_file is not None:
-        try:
-            graph_data_str = graph_data_file.read().decode("utf-8")
-            graph_data_json = json.loads(graph_data_str)
-            nodes = []
-            id_to_label = {}
-            # Reconstruct nodes from the JSON file
-            for node_dict in graph_data_json.get("nodes", []):
-                node_obj = Node(
-                    id=node_dict.get("id"),
-                    label=node_dict.get("label"),
-                    types=["Unknown"],  # Default type, since type info isn't saved in the download
-                    metadata=node_dict.get("metadata", {}),
-                    edges=[]
-                )
-                nodes.append(node_obj)
-                id_to_label[node_obj.id] = node_obj.label
-
-            # Reconstruct edges from the JSON file and attach them to the corresponding nodes
-            for edge_dict in graph_data_json.get("edges", []):
-                src = edge_dict.get("from")
-                dst = edge_dict.get("to")
-                relationship = edge_dict.get("label", "related")
-                new_edge = Edge(source=src, target=dst, relationship=relationship)
-                for node in nodes:
-                    if node.id == src:
-                        node.edges.append(new_edge)
-                        break
-
-            st.session_state.graph_data = GraphData(nodes=nodes)
-            st.session_state.id_to_label = id_to_label
-            st.sidebar.success("Graph data loaded successfully!")
-        except Exception as e:
-            st.sidebar.error(f"Error loading graph data: {e}")
-
-    # ---------------------------
-    # Graph Editing Section
-    # ---------------------------
-    st.sidebar.header("✏️ Graph Editing")
-    with st.sidebar.expander("Edit Graph"):
+    
+    with st.sidebar.expander("Graph Settings"):
+        graph_settings_file = st.file_uploader("Upload Graph Settings", type=["json"], key="graph_settings_file")
+        if graph_settings_file is not None:
+            try:
+                settings_str = graph_settings_file.read().decode("utf-8")
+                settings_json = json.loads(settings_str)
+                st.session_state.node_positions = settings_json.get("node_positions", st.session_state.node_positions)
+                st.session_state.selected_relationships = settings_json.get("selected_relationships", st.session_state.selected_relationships)
+                st.session_state.enable_physics = settings_json.get("enable_physics", st.session_state.enable_physics)
+                st.session_state.filtered_types = settings_json.get("filtered_types", st.session_state.filtered_types)
+                st.session_state.search_term = settings_json.get("search_term", st.session_state.search_term)
+                st.session_state.show_labels = settings_json.get("show_labels", st.session_state.show_labels)
+                st.session_state.physics_params = settings_json.get("physics_params", st.session_state.physics_params)
+                st.sidebar.success("Graph settings uploaded successfully!")
+            except Exception as e:
+                st.sidebar.error(f"Error loading graph settings: {e}")
+        graph_settings = {
+            "node_positions": st.session_state.node_positions,
+            "selected_relationships": st.session_state.selected_relationships,
+            "enable_physics": st.session_state.enable_physics,
+            "filtered_types": st.session_state.filtered_types,
+            "search_term": st.session_state.search_term,
+            "show_labels": st.session_state.show_labels,
+            "physics_params": st.session_state.physics_params,
+        }
+        settings_json_str = json.dumps(graph_settings, indent=2)
+        st.download_button(
+            label="Download Graph Settings",
+            data=settings_json_str,
+            file_name="graph_settings.json",
+            mime="application/json"
+        )
+    
+    with st.sidebar.expander("Graph Data Loader"):
+        graph_data_file = st.file_uploader("Upload Graph Data JSON", type=["json"], key="graph_data_file")
+        if graph_data_file is not None:
+            try:
+                graph_data_str = graph_data_file.read().decode("utf-8")
+                graph_data_json = json.loads(graph_data_str)
+                nodes = []
+                id_to_label = {}
+                for node_dict in graph_data_json.get("nodes", []):
+                    node_obj = Node(
+                        id=node_dict.get("id"),
+                        label=node_dict.get("label"),
+                        types=node_dict.get("types", ["Unknown"]),
+                        metadata=node_dict.get("metadata", {}),
+                        edges=[]
+                    )
+                    nodes.append(node_obj)
+                    id_to_label[node_obj.id] = node_obj.label
+                for edge_dict in graph_data_json.get("edges", []):
+                    src = edge_dict.get("from")
+                    dst = edge_dict.get("to")
+                    relationship = edge_dict.get("label", "related")
+                    new_edge = Edge(source=src, target=dst, relationship=relationship)
+                    for node in nodes:
+                        if node.id == src:
+                            node.edges.append(new_edge)
+                            break
+                st.session_state.graph_data = GraphData(nodes=nodes)
+                st.session_state.id_to_label = id_to_label
+                st.sidebar.success("Graph data loaded successfully!")
+            except Exception as e:
+                st.sidebar.error(f"Error loading graph data: {e}")
+    
+    with st.sidebar.expander("Graph Editing"):
         edit_option = st.radio("Select action", ("Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"))
         nodes_list: List[Node] = st.session_state.graph_data.nodes
-
         if edit_option == "Add Node":
             with st.form("add_node_form"):
                 new_node_id = st.text_input("Node ID")
                 new_node_label = st.text_input("Node Label")
                 new_node_type = st.selectbox("Node Type", list(NODE_TYPE_COLORS.keys()))
                 submitted = st.form_submit_button("Add Node")
-                if submitted and new_node_id and new_node_label:
-                    new_node = Node(
-                        id=new_node_id,
-                        label=new_node_label,
-                        types=[new_node_type],
-                        metadata={
-                            "id": new_node_id,
-                            "prefLabel": {"en": new_node_label},
-                            "type": [new_node_type]
-                        },
-                        edges=[]
-                    )
-                    nodes_list.append(new_node)
-                    st.session_state.id_to_label[new_node_id] = new_node_label
-                    st.sidebar.success(f"Node '{new_node_label}' added.")
-
+                if submitted:
+                    if any(node.id == new_node_id for node in nodes_list):
+                        st.error("A node with this ID already exists.")
+                    elif new_node_id and new_node_label:
+                        new_node = Node(
+                            id=new_node_id,
+                            label=new_node_label,
+                            types=[new_node_type],
+                            metadata={
+                                "id": new_node_id,
+                                "prefLabel": {"en": new_node_label},
+                                "type": [new_node_type]
+                            },
+                            edges=[]
+                        )
+                        nodes_list.append(new_node)
+                        st.session_state.id_to_label[new_node_id] = new_node_label
+                        st.sidebar.success(f"Node '{new_node_label}' added.")
+                    else:
+                        st.error("Please provide both a Node ID and Label.")
         elif edit_option == "Delete Node":
             node_ids = [node.id for node in nodes_list]
             if node_ids:
-                node_to_delete = st.selectbox("Select Node to Delete", node_ids)
+                # Pre-select the current node if available
+                default_index = node_ids.index(st.session_state.selected_node) if st.session_state.selected_node in node_ids else 0
+                node_to_delete = st.selectbox("Select Node to Delete", node_ids, index=default_index)
                 if st.button("Delete Node"):
                     st.session_state.graph_data.nodes = [node for node in nodes_list if node.id != node_to_delete]
                     for node in st.session_state.graph_data.nodes:
@@ -692,11 +663,11 @@ def main() -> None:
                     st.sidebar.success(f"Node '{node_to_delete}' deleted.")
             else:
                 st.info("No nodes available to delete.")
-
         elif edit_option == "Modify Node":
             node_ids = [node.id for node in nodes_list]
             if node_ids:
-                node_to_modify = st.selectbox("Select Node to Modify", node_ids)
+                default_index = node_ids.index(st.session_state.selected_node) if st.session_state.selected_node in node_ids else 0
+                node_to_modify = st.selectbox("Select Node to Modify", node_ids, index=default_index)
                 node_obj = next((node for node in nodes_list if node.id == node_to_modify), None)
                 if node_obj:
                     with st.form("modify_node_form"):
@@ -713,7 +684,6 @@ def main() -> None:
                             st.sidebar.success(f"Node '{node_to_modify}' modified.")
             else:
                 st.info("No nodes available to modify.")
-
         elif edit_option == "Add Edge":
             if nodes_list:
                 with st.form("add_edge_form"):
@@ -728,7 +698,6 @@ def main() -> None:
                         st.sidebar.success(f"Edge '{relationship}' from '{source_node}' to '{target_node}' added.")
             else:
                 st.info("No nodes available to add an edge.")
-
         elif edit_option == "Delete Edge":
             all_edges = []
             for node in nodes_list:
@@ -743,264 +712,226 @@ def main() -> None:
                     st.sidebar.success("Edge deleted.")
             else:
                 st.info("No edges available to delete.")
-
-    filtered_nodes: Optional[Set[str]] = None
+    
+    with st.sidebar.expander("Manual Node Positioning"):
+        if st.session_state.graph_data.nodes:
+            unique_nodes: Dict[str, str] = {node.id: node.label for node in st.session_state.graph_data.nodes}
+            for node in st.session_state.graph_data.nodes:
+                for edge in node.edges:
+                    unique_nodes.setdefault(edge.target, st.session_state.id_to_label.get(edge.target, edge.target))
+            node_ids = list(unique_nodes.keys())
+            default_index = node_ids.index(st.session_state.selected_node) if st.session_state.selected_node in node_ids else 0
+            selected_node = st.selectbox(
+                label="Select a Node to Position",
+                options=node_ids,
+                index=default_index,
+                format_func=lambda x: unique_nodes.get(x, x),
+                key="selected_node_control"
+            )
+            st.session_state.selected_node = selected_node
+            if selected_node:
+                with st.form(key="position_form"):
+                    x_pos = st.number_input(
+                        "X Position",
+                        value=st.session_state.node_positions.get(selected_node, {}).get("x", 0.0),
+                        step=10.0,
+                        help="Set the X coordinate for the selected node."
+                    )
+                    y_pos = st.number_input(
+                        "Y Position",
+                        value=st.session_state.node_positions.get(selected_node, {}).get("y", 0.0),
+                        step=10.0,
+                        help="Set the Y coordinate for the selected node."
+                    )
+                    if st.form_submit_button(label="Set Position"):
+                        st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
+                        st.sidebar.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
+    
+    # Relationship filtering using a searchable multiselect
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
-        filtered_types = st.sidebar.multiselect(
+        st.session_state.filtered_types = st.sidebar.multiselect(
             "Filter by Entity Types",
             options=list(all_types),
             default=st.session_state.filtered_types,
             key="filtered_types_control"
         )
-        st.session_state.filtered_types = filtered_types
-
-    search_term = st.sidebar.text_input(
+    st.session_state.search_term = st.sidebar.text_input(
         label="Search for a Node",
         help="Enter the entity name to highlight",
         key="search_term_control",
         value=st.session_state.search_term
     )
-    st.session_state.search_term = search_term
-
     sparql_query_input = st.sidebar.text_area(
         label="SPARQL Query",
-        help=(
-            "Enter a SPARQL SELECT query to filter nodes. For example:\n"
-            "```\nSELECT ?s WHERE { ?s rdf:type ex:Person . }\n```"
-        ),
+        help="Enter a SPARQL SELECT query to filter nodes. For example:\n```\nSELECT ?s WHERE { ?s rdf:type ex:Person . }\n```",
         key="sparql_query_control",
         value=st.session_state.sparql_query
     )
     st.session_state.sparql_query = sparql_query_input
 
     if sparql_query_input.strip():
+        st.sidebar.info("Query Running...")
         try:
             filtered_nodes = run_sparql_query(sparql_query_input, st.session_state.rdf_graph)
-            st.sidebar.info(f"SPARQL Query returned {len(filtered_nodes)} nodes.")
+            st.sidebar.success(f"Query Successful: {len(filtered_nodes)} result(s) found.")
+            st.sidebar.dataframe(pd.DataFrame(list(filtered_nodes), columns=["Node ID"]))
         except Exception as e:
             st.sidebar.error(f"SPARQL Query failed: {e}")
             filtered_nodes = None
+    else:
+        filtered_nodes = None
 
-    show_labels = st.sidebar.checkbox(
-        label="Show Node Labels",
-        value=st.session_state.show_labels,
-        help="Toggle the visibility of node labels to reduce clutter",
-        key="show_labels_control"
-    )
-    st.session_state.show_labels = show_labels
-
-    if st.session_state.filtered_types:
-        filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
-                            if any(t in st.session_state.filtered_types for t in node.types)}
-        filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
-
+    # Display legends
     st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
-
-    # ---------------------------
-    # Manual Node Positioning
-    # ---------------------------
-    st.sidebar.header("📍 Manual Node Positioning")
-    if st.session_state.graph_data.nodes:
-        unique_nodes: Dict[str, str] = {node.id: node.label for node in st.session_state.graph_data.nodes}
-        for node in st.session_state.graph_data.nodes:
-            for edge in node.edges:
-                unique_nodes.setdefault(edge.target, st.session_state.id_to_label.get(edge.target, edge.target))
-
-        selected_node = st.sidebar.selectbox(
-            label="Select a Node to Position",
-            options=list(unique_nodes.keys()),
-            format_func=lambda x: unique_nodes.get(x, x),
-            key="selected_node_control"
-        )
-        st.session_state.selected_node = selected_node
-        if selected_node:
-            with st.sidebar.form(key="position_form"):
-                x_pos = st.number_input(
-                    "X Position",
-                    value=st.session_state.node_positions.get(selected_node, {}).get("x", 0.0),
-                    step=10.0,
-                    help="Set the X coordinate for the selected node."
+    
+    # -----------------------------------------------------------------------------
+    # Main Content: Tabbed Interface
+    # -----------------------------------------------------------------------------
+    tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "About"])
+    
+    # ------------------- Tab 1: Graph View -------------------
+    with tabs[0]:
+        st.header("🕸️ Network Graph")
+        if st.session_state.graph_data.nodes:
+            with st.spinner("Generating Network Graph..."):
+                net = build_graph(
+                    graph_data=st.session_state.graph_data,
+                    id_to_label=st.session_state.id_to_label,
+                    selected_relationships=st.session_state.selected_relationships,
+                    search_node=next((node.id for node in st.session_state.graph_data.nodes 
+                                      if node.label.lower() == st.session_state.search_term.lower()), None),
+                    node_positions=st.session_state.node_positions,
+                    show_labels=st.session_state.show_labels,
+                    filtered_nodes=filtered_nodes,
+                    dark_mode=dark_mode
                 )
-                y_pos = st.number_input(
-                    "Y Position",
-                    value=st.session_state.node_positions.get(selected_node, {}).get("y", 0.0),
-                    step=10.0,
-                    help="Set the Y coordinate for the selected node."
-                )
-                if st.form_submit_button(label="Set Position"):
-                    st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
-                    st.sidebar.success(
-                        f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})"
-                    )
-
-    graph_html = None
-    if st.session_state.graph_data.nodes:
-        with st.spinner("Generating Network Graph..."):
-            net = build_graph(
-                graph_data=st.session_state.graph_data,
-                id_to_label=st.session_state.id_to_label,
-                selected_relationships=st.session_state.selected_relationships,
-                search_node=next((node.id for node in st.session_state.graph_data.nodes 
-                                  if node.label.lower() == search_term.lower()), None),
-                node_positions=st.session_state.node_positions,
-                show_labels=show_labels,
-                filtered_nodes=filtered_nodes,
-                dark_mode=dark_mode
-            )
-
-        if st.session_state.enable_physics:
-            for node in net.nodes:
-                pos = st.session_state.node_positions.get(node.get("id"))
-                if pos:
-                    node['x'] = pos['x']
-                    node['y'] = pos['y']
-                    node['fixed'] = True
-        else:
-            if isinstance(net.options, dict):
-                net.options["physics"]["enabled"] = False
-            G = nx.Graph()
-            for node in net.nodes:
-                G.add_node(node["id"])
-            for edge in net.edges:
-                G.add_edge(edge["from"], edge["to"])
-            iterations = 20 if len(G.nodes) <= 50 else 50
-            pos = nx.spring_layout(G, k=0.15, iterations=iterations, seed=42)
-            for node in net.nodes:
-                node_id = node["id"]
-                if st.session_state.node_positions.get(node_id):
-                    node['x'] = st.session_state.node_positions[node_id]["x"]
-                    node['y'] = st.session_state.node_positions[node_id]["y"]
-                else:
-                    p = pos[node_id]
-                    node['x'] = p[0] * 500
-                    node['y'] = p[1] * 500
-                node['fixed'] = True
-                node['physics'] = False
-            if isinstance(net.options, dict):
-                net.options.setdefault("configure", {})["enabled"] = True
-                net.options["configure"]["filter"] = ["interaction"]
-
-        if community_detection:
-            G = nx.Graph()
-            for node in net.nodes:
-                G.add_node(node["id"])
-            for edge in net.edges:
-                G.add_edge(edge["from"], edge["to"])
-            try:
-                communities = list(nx.algorithms.community.greedy_modularity_communities(G))
-                community_colors = [
-                    "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-                    "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
-                ]
-                community_map: Dict[str, str] = {}
-                for i, comm in enumerate(communities):
-                    for n in comm:
-                        community_map[n] = community_colors[i % len(community_colors)]
+            # Apply manual node positions and fix them if physics is disabled
+            if st.session_state.enable_physics:
                 for node in net.nodes:
-                    if node["id"] in community_map:
-                        node["color"] = community_map[node["id"]]
+                    pos = st.session_state.node_positions.get(node.get("id"))
+                    if pos:
+                        node['x'] = pos['x']
+                        node['y'] = pos['y']
+                        node['fixed'] = True
+            else:
+                # Disable physics and use spring layout
                 if isinstance(net.options, dict):
-                    net.options.setdefault("configure", {})["enabled"] = True
-                    net.options["configure"]["filter"] = ["physics"]
+                    net.options["physics"]["enabled"] = False
+                G = nx.Graph()
+                for node in net.nodes:
+                    G.add_node(node["id"])
+                for edge in net.edges:
+                    G.add_edge(edge["from"], edge["to"])
+                iterations = 20 if len(G.nodes) <= 50 else 50
+                pos = nx.spring_layout(G, k=0.15, iterations=iterations, seed=42)
+                for node in net.nodes:
+                    node_id = node["id"]
+                    if st.session_state.node_positions.get(node_id):
+                        node['x'] = st.session_state.node_positions[node_id]["x"]
+                        node['y'] = st.session_state.node_positions[node_id]["y"]
+                    else:
+                        p = pos[node_id]
+                        node['x'] = p[0] * 500
+                        node['y'] = p[1] * 500
+                    node['fixed'] = True
+                    node['physics'] = False
+            # Community detection enhancement
+            if community_detection:
+                G = nx.Graph()
+                for node in net.nodes:
+                    G.add_node(node["id"])
+                for edge in net.edges:
+                    G.add_edge(edge["from"], edge["to"])
+                try:
+                    communities = list(nx.algorithms.community.greedy_modularity_communities(G))
+                    community_colors = [
+                        "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+                        "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+                    ]
+                    community_map: Dict[str, str] = {}
+                    for i, comm in enumerate(communities):
+                        for n in comm:
+                            community_map[n] = community_colors[i % len(community_colors)]
+                    for node in net.nodes:
+                        if node["id"] in community_map:
+                            node["color"] = community_map[node["id"]]
+                    if isinstance(net.options, dict):
+                        net.options.setdefault("configure", {})["enabled"] = True
+                        net.options["configure"]["filter"] = ["physics"]
+                except Exception as e:
+                    st.error(f"Community detection failed: {e}")
+            if isinstance(net.options, dict):
+                net.options["configure"] = {
+                    "enabled": True,
+                    "filter": ["physics"],
+                    "showButton": True
+                }
+            if len(net.nodes) > 50 and st.session_state.show_labels:
+                st.info("The graph has many nodes. Consider toggling 'Show Node Labels' off for better readability.")
+            try:
+                output_path = "network_graph.html"
+                net.save_graph(output_path)
+                with open(output_path, "r", encoding="utf-8") as f:
+                    graph_html = f.read()
+                os.remove(output_path)
+                components.html(graph_html, height=750, scrolling=True)
             except Exception as e:
-                st.error(f"Community detection failed: {e}")
-
-        # Enable configuration sliders for physics in both the Streamlit app and the downloaded HTML
-        if isinstance(net.options, dict):
-            net.options["configure"] = {
-                "enabled": True,
-                "filter": ["physics"],
-                "showButton": True
-            }
-
-        if len(net.nodes) > 50 and show_labels:
-            st.info("The graph has many nodes. Consider toggling 'Show Node Labels' off for better readability.")
-
-        try:
-            output_path = "network_graph.html"
-            net.save_graph(output_path)
-            with open(output_path, "r", encoding="utf-8") as f:
-                graph_html = f.read()
-            os.remove(output_path)
-            components.html(graph_html, height=750, scrolling=True)
-        except Exception as e:
-            st.error(f"Graph generation failed: {e}")
-
-        st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
-        if st.session_state.selected_node:
-            display_node_metadata(st.session_state.selected_node, st.session_state.graph_data, st.session_state.id_to_label)
-        else:
-            st.markdown("#### Node Metadata")
-            st.info("Click on a node to display its metadata.")
-
-        # ---------------------------------------------------------------------
-        # Map Visualization Enhancement for Entities with Coordinates
-        # ---------------------------------------------------------------------
-        place_locations = []
-        for node in st.session_state.graph_data.nodes:
-            logging.info(f"Processing node {node.id} for map view. Metadata keys: {list(node.metadata.keys()) if isinstance(node.metadata, dict) else 'N/A'}")
-            if isinstance(node.metadata, dict) and "geographicCoordinates" in node.metadata:
-                coords = node.metadata["geographicCoordinates"]
-                logging.info(f"Node {node.id} has geographicCoordinates: {coords}")
-                if isinstance(coords, list):
-                    coords = coords[0]
-                if isinstance(coords, str) and coords.startswith("Point(") and coords.endswith(")"):
-                    coords = coords[6:-1].strip()  # Remove 'Point(' and ')'
-                    parts = coords.split()
-                    if len(parts) == 2:
+                st.error(f"Graph generation failed: {e}")
+            st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
+            if st.session_state.selected_node:
+                display_node_metadata(st.session_state.selected_node, st.session_state.graph_data, st.session_state.id_to_label)
+            else:
+                st.markdown("#### Node Metadata")
+                st.info("Select a node from the sidebar to view its metadata.")
+            # Map Visualization Enhancement
+            place_locations = []
+            for node in st.session_state.graph_data.nodes:
+                if isinstance(node.metadata, dict) and "geographicCoordinates" in node.metadata:
+                    coords = node.metadata["geographicCoordinates"]
+                    if isinstance(coords, list):
+                        coords = coords[0]
+                    if isinstance(coords, str) and coords.startswith("Point(") and coords.endswith(")"):
+                        coords = coords[6:-1].strip()
+                        parts = coords.split()
+                        if len(parts) == 2:
+                            try:
+                                lon, lat = map(float, parts)
+                                place_locations.append({"lat": lat, "lon": lon, "label": node.label})
+                            except ValueError:
+                                logging.error(f"Invalid coordinates for node {node.id}: {coords}")
+                elif isinstance(node.metadata, dict) and "latitude" in node.metadata and "longitude" in node.metadata:
+                    lat = node.metadata.get("latitude")
+                    lon = node.metadata.get("longitude")
+                    if lat is not None and lon is not None:
                         try:
-                            lon, lat = map(float, parts)
-                            place_locations.append({
-                                "lat": lat,
-                                "lon": lon,
-                                "label": node.label
-                            })
+                            place_locations.append({"lat": float(lat), "lon": float(lon), "label": node.label})
                         except ValueError:
-                            logging.error(f"Invalid coordinates for node {node.id}: {coords}")
-            elif isinstance(node.metadata, dict) and "latitude" in node.metadata and "longitude" in node.metadata:
-                lat = node.metadata.get("latitude")
-                lon = node.metadata.get("longitude")
-                logging.info(f"Node {node.id} has separate lat/lon: {lat}, {lon}")
-                if lat is not None and lon is not None:
-                    try:
-                        place_locations.append({
-                            "lat": float(lat),
-                            "lon": float(lon),
-                            "label": node.label
-                        })
-                    except ValueError:
-                        logging.error(f"Invalid numeric coordinates for node {node.id}: {lat}, {lon}")
-        if place_locations:
-            st.subheader("Map View of Entities with Coordinates")
-            df_places = pd.DataFrame(place_locations)
-            st.map(df_places)
-        else:
-            st.info("No entities with valid coordinates found for the map view.")
-
-        # ---------------------------------------------------------------------
-        # IIIF Viewer Enhancement: Embed Mirador with Dynamic Manifest URL
-        # ---------------------------------------------------------------------
-        st.subheader("IIIF Viewer")
-        # Look for StillImage nodes that have an 'image' field (assumed to be the IIIF manifest URL)
-        iiif_nodes = [node for node in st.session_state.graph_data.nodes if "StillImage" in node.types and isinstance(node.metadata, dict) and "image" in node.metadata]
-        if iiif_nodes:
-            selected_iiif = st.selectbox(
-                "Select a StillImage for IIIF Viewer",
-                options=[node.id for node in iiif_nodes],
-                format_func=lambda x: st.session_state.id_to_label.get(x, x)
-            )
-            selected_node = next((node for node in iiif_nodes if node.id == selected_iiif), None)
-            if selected_node:
-                manifest_url = selected_node.metadata.get("image")
-                # If the manifest URL is a list, take the first element
-                if isinstance(manifest_url, list):
-                    manifest_url = manifest_url[0]
-                # Strip out the hard-coded prefix if present
-                prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
-                if manifest_url.startswith(prefix):
-                    manifest_url = manifest_url[len(prefix):]
-                html_code = f'''
+                            logging.error(f"Invalid numeric coordinates for node {node.id}: {lat}, {lon}")
+            if place_locations:
+                st.subheader("Map View of Entities with Coordinates")
+                df_places = pd.DataFrame(place_locations)
+                st.map(df_places)
+            else:
+                st.info("No entities with valid coordinates found for the map view.")
+            # IIIF Viewer Enhancement
+            st.subheader("IIIF Viewer")
+            iiif_nodes = [node for node in st.session_state.graph_data.nodes if "StillImage" in node.types and isinstance(node.metadata, dict) and "image" in node.metadata]
+            if iiif_nodes:
+                selected_iiif = st.selectbox(
+                    "Select a StillImage for IIIF Viewer",
+                    options=[node.id for node in iiif_nodes],
+                    format_func=lambda x: st.session_state.id_to_label.get(x, x)
+                )
+                selected_node_obj = next((node for node in iiif_nodes if node.id == selected_iiif), None)
+                if selected_node_obj:
+                    manifest_url = selected_node_obj.metadata.get("image")
+                    if isinstance(manifest_url, list):
+                        manifest_url = manifest_url[0]
+                    prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
+                    if manifest_url.startswith(prefix):
+                        manifest_url = manifest_url[len(prefix):]
+                    html_code = f'''
 <html>
   <head>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/mirador/dist/css/mirador.min.css">
@@ -1017,63 +948,114 @@ def main() -> None:
   </body>
 </html>
 '''
-                components.html(html_code, height=650)
-        else:
-            st.info("No StillImage entity with a manifest found.")
-
-        # ---------------------------------------------------------------------
-        # Export Options
-        # ---------------------------------------------------------------------
-        st.markdown("### 📥 Export Options")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if graph_html:
-                st.download_button(
-                    label="Download Graph as HTML",
-                    data=graph_html,
-                    file_name="network_graph.html",
-                    mime="text/html"
-                )
+                    components.html(html_code, height=650)
             else:
-                st.info("Please generate the graph first to download.")
-        with col2:
-            if st.button("Download Graph as PNG"):
-                st.warning(
-                    "Exporting as PNG is not supported directly. Please export as HTML and take a screenshot."
-                )
-        with col3:
-            if st.button("Download Graph Data as JSON"):
-                graph_data_json = {
-                    "nodes": [
-                        {"id": node['id'], "label": node['label'], "metadata": node.get('title', ''),
-                         "x": node.get('x'), "y": node.get('y')}
-                        for node in net.nodes
-                    ],
-                    "edges": [
-                        {"from": edge['from'], "to": edge['to'], "label": edge['label'],
-                         "metadata": edge.get('title', '')}
-                        for edge in net.edges
-                    ]
-                }
-                json_str = json.dumps(graph_data_json, indent=2)
-                st.download_button(
-                    label="Download Graph Data as JSON",
-                    data=json_str,
-                    file_name="graph_data.json",
-                    mime="application/json"
-                )
-    else:
-        st.info("No valid data found. Please check your JSON files.")
-
+                st.info("No StillImage entity with a manifest found.")
+            # Export Options
+            st.markdown("### 📥 Export Options")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if 'graph_html' in locals():
+                    st.download_button(
+                        label="Download Graph as HTML",
+                        data=graph_html,
+                        file_name="network_graph.html",
+                        mime="text/html"
+                    )
+                else:
+                    st.info("Please generate the graph first to download.")
+            with col2:
+                if st.button("Download Graph as PNG"):
+                    st.warning("Exporting as PNG is not supported directly. Please export as HTML and take a screenshot.")
+            with col3:
+                if st.button("Download Graph Data as JSON"):
+                    graph_data_json = {
+                        "nodes": [
+                            {"id": node.get('id'), "label": node.get('label'), "types": node.get("types", ["Unknown"]),
+                             "metadata": node.get('title', ''), "x": node.get('x'), "y": node.get('y')}
+                            for node in net.nodes
+                        ],
+                        "edges": [
+                            {"from": edge.get('from'), "to": edge.get('to'), "label": edge.get('label'),
+                             "metadata": edge.get('title', '')}
+                            for edge in net.edges
+                        ]
+                    }
+                    json_str = json.dumps(graph_data_json, indent=2)
+                    st.download_button(
+                        label="Download Graph Data as JSON",
+                        data=json_str,
+                        file_name="graph_data.json",
+                        mime="application/json"
+                    )
+        else:
+            st.info("No valid data found. Please check your JSON files.")
+    
+    # ------------------- Tab 2: Data View -------------------
+    with tabs[1]:
+        st.header("Data View")
+        st.subheader("Graph Nodes")
+        if st.session_state.graph_data.nodes:
+            data = [{"ID": node.id, "Label": node.label, "Types": ", ".join(node.types)} for node in st.session_state.graph_data.nodes]
+            st.dataframe(pd.DataFrame(data))
+        else:
+            st.info("No data available. Please upload JSON files.")
+    
+    # ------------------- Tab 3: SPARQL Query -------------------
+    with tabs[2]:
+        st.header("SPARQL Query")
+        st.markdown("Enter a SPARQL SELECT query in the sidebar and view the results here.")
+        if sparql_query_input.strip():
+            try:
+                query_results = run_sparql_query(sparql_query_input, st.session_state.rdf_graph)
+                st.success(f"Query returned {len(query_results)} result(s).")
+                st.dataframe(pd.DataFrame(list(query_results), columns=["Node ID"]))
+            except Exception as e:
+                st.error(f"SPARQL Query failed: {e}")
+        else:
+            st.info("No query entered.")
+    
+    # ------------------- Tab 4: About -------------------
+    with tabs[3]:
+        st.header("About Linked Data Explorer")
+        st.markdown(
+            """
+            ### Explore Relationships Between Entities
+            Upload multiple JSON files representing entities and generate an interactive network.
+            Use the sidebar to filter relationships, search for nodes, set manual positions,
+            and edit the graph directly.
+            
+            **Features:**
+            - **Tabbed Interface:** Separate views for the graph, raw data, SPARQL queries, and about information.
+            - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning and community detection.
+            - **Dark Mode:** Toggle for a dark-themed interface with improved readability.
+            - **SPARQL Query Support:** Run queries on your RDF-converted graph and preview results.
+            - **IIIF Viewer:** For StillImage nodes, view the associated manifest directly in the app.
+            
+            **Usage:**
+            - Upload JSON files via the sidebar.
+            - Configure graph settings and physics parameters.
+            - Edit the graph by adding, deleting, or modifying nodes and edges.
+            - Explore your data using the various tabs.
+            
+            Enjoy exploring your linked data!
+            """
+        )
+    
+    # -----------------------------------------------------------------------------
+    # Global Style Adjustments for Dark Mode and Layout
+    # -----------------------------------------------------------------------------
     st.markdown(
         f"""
         <style>
             .stApp {{
                 max-width: 1600px;
                 padding: 1rem;
+                background-color: {"#2c2f33" if dark_mode else "#f0f2f6"};
+                color: {"#ffffff" if dark_mode else "#343a40"};
             }}
             h1, h3, h4 {{
-                color: {"#333" if not dark_mode else "#ddd"};
+                color: {"#ddd" if dark_mode else "#333"};
             }}
             .stButton > button, .stDownloadButton > button {{
                 background-color: #5cb85c;

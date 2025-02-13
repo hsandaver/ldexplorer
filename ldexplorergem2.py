@@ -47,7 +47,7 @@ class Node:
     id: str
     label: str
     types: List[str]
-    metadata: Dict[str, Any]
+    metadata: Any  # Allow any type, since metadata might not be a dict
     edges: List[Edge] = field(default_factory=list)
 
 @dataclass
@@ -462,15 +462,19 @@ def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict
 
     if node_obj:
         st.write(f"**Label:** {id_to_label.get(node_obj.id, node_obj.id)}")
-        for key, value in node_obj.metadata.items():
-            if key == 'prefLabel':
-                continue
-            st.write(f"**{key}:**")
-            if isinstance(value, list):
-                for v in value:
-                    st.write(f"  - {v}")
-            else:
-                st.write(f"  - {value}")
+        # Check if metadata is a dict; if not, display it directly.
+        if isinstance(node_obj.metadata, dict):
+            for key, value in node_obj.metadata.items():
+                if key == 'prefLabel':
+                    continue
+                st.write(f"**{key}:**")
+                if isinstance(value, list):
+                    for v in value:
+                        st.write(f"  - {v}")
+                else:
+                    st.write(f"  - {value}")
+        else:
+            st.write("Metadata:", node_obj.metadata)
     else:
         st.write("No metadata available for this node.")
 
@@ -935,8 +939,8 @@ def main() -> None:
         # ---------------------------------------------------------------------
         place_locations = []
         for node in st.session_state.graph_data.nodes:
-            logging.info(f"Processing node {node.id} for map view. Metadata keys: {list(node.metadata.keys())}")
-            if "geographicCoordinates" in node.metadata:
+            logging.info(f"Processing node {node.id} for map view. Metadata keys: {list(node.metadata.keys()) if isinstance(node.metadata, dict) else 'N/A'}")
+            if isinstance(node.metadata, dict) and "geographicCoordinates" in node.metadata:
                 coords = node.metadata["geographicCoordinates"]
                 logging.info(f"Node {node.id} has geographicCoordinates: {coords}")
                 if isinstance(coords, list):
@@ -954,7 +958,7 @@ def main() -> None:
                             })
                         except ValueError:
                             logging.error(f"Invalid coordinates for node {node.id}: {coords}")
-            elif "latitude" in node.metadata and "longitude" in node.metadata:
+            elif isinstance(node.metadata, dict) and "latitude" in node.metadata and "longitude" in node.metadata:
                 lat = node.metadata.get("latitude")
                 lon = node.metadata.get("longitude")
                 logging.info(f"Node {node.id} has separate lat/lon: {lat}, {lon}")
@@ -979,7 +983,7 @@ def main() -> None:
         # ---------------------------------------------------------------------
         st.subheader("IIIF Viewer")
         # Look for StillImage nodes that have an 'image' field (assumed to be the IIIF manifest URL)
-        iiif_nodes = [node for node in st.session_state.graph_data.nodes if "StillImage" in node.types and "image" in node.metadata]
+        iiif_nodes = [node for node in st.session_state.graph_data.nodes if "StillImage" in node.types and isinstance(node.metadata, dict) and "image" in node.metadata]
         if iiif_nodes:
             selected_iiif = st.selectbox(
                 "Select a StillImage for IIIF Viewer",

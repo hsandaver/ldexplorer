@@ -190,6 +190,16 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
         data[rel] = normalized_values
     return data
 
+def is_valid_iiif_manifest(url: str) -> bool:
+    """
+    Heuristically determine if a URL is a valid IIIF manifest URL.
+    You can adjust these rules as needed.
+    """
+    if not url.startswith("http"):
+        return False
+    lower_url = url.lower()
+    return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
+
 # -----------------------------------------------------------------------------
 # Data Caching: Parse Entities from File Contents
 # -----------------------------------------------------------------------------
@@ -945,7 +955,9 @@ def main() -> None:
                         prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
                         if manifest_url.startswith(prefix):
                             manifest_url = manifest_url[len(prefix):]
-                        if manifest_url.strip():
+                        if manifest_url.strip() and is_valid_iiif_manifest(manifest_url):
+                            # Log the manifest URL for debugging
+                            st.write(f"Using manifest URL: {manifest_url}")
                             html_code = f'''
 <html>
   <head>
@@ -955,8 +967,8 @@ def main() -> None:
   <body>
     <div id="mirador-viewer" style="height: 600px;"></div>
     <script>
-      // Assign the manifest URL to a JS variable using JSON.stringify for proper escaping
       var manifestUrl = {json.dumps(manifest_url)};
+      console.log("Manifest URL:", manifestUrl);
       Mirador.viewer({{
         id: 'mirador-viewer',
         windows: [{{ loadedManifest: manifestUrl }}]
@@ -967,9 +979,9 @@ def main() -> None:
 '''
                             components.html(html_code, height=650)
                         else:
-                            st.info("No valid manifest found for the selected entity.")
+                            st.info("No valid IIIF manifest found for the selected entity.")
                     else:
-                        st.info("No valid manifest found for the selected entity.")
+                        st.info("No valid IIIF manifest found for the selected entity.")
             else:
                 st.info("No entity with a manifest found.")
             # Export Options

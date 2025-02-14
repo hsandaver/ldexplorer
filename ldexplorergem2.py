@@ -955,9 +955,11 @@ def main() -> None:
   <body>
     <div id="mirador-viewer" style="height: 600px;"></div>
     <script>
+      // Assign the manifest URL to a JS variable using JSON.stringify for proper escaping
+      var manifestUrl = {json.dumps(manifest_url)};
       Mirador.viewer({{
         id: 'mirador-viewer',
-        windows: [{{ loadedManifest: {json.dumps(manifest_url)} }}]
+        windows: [{{ loadedManifest: manifestUrl }}]
       }});
     </script>
   </body>

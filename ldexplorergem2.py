@@ -3,7 +3,7 @@
 Enhanced Linked Data Network Visualization Application
 Incorporates improvements in UI/UX, including a tabbed interface, grouped sidebar controls,
 dark mode enhancements, improved SPARQL feedback, and better graph editing.
-Author: Huw Sandaver (Original) | Enhancements by ChatGPT and Mochi
+Author: Huw Sandaver (Original) | Enhancements by ChatGPT
 Date: 2025-02-14
 """
 
@@ -921,22 +921,27 @@ def main() -> None:
                 st.info("No entities with valid coordinates found for the map view.")
             # IIIF Viewer Enhancement
             st.subheader("IIIF Viewer")
-            iiif_nodes = [node for node in st.session_state.graph_data.nodes if "StillImage" in node.types and isinstance(node.metadata, dict) and "image" in node.metadata]
+            iiif_nodes = [
+                node for node in st.session_state.graph_data.nodes
+                if isinstance(node.metadata, dict) and ("image" in node.metadata or "manifest" in node.metadata)
+            ]
             if iiif_nodes:
                 selected_iiif = st.selectbox(
-                    "Select a StillImage for IIIF Viewer",
+                    "Select an entity with a manifest for IIIF Viewer",
                     options=[node.id for node in iiif_nodes],
                     format_func=lambda x: st.session_state.id_to_label.get(x, x)
                 )
                 selected_node_obj = next((node for node in iiif_nodes if node.id == selected_iiif), None)
                 if selected_node_obj:
-                    manifest_url = selected_node_obj.metadata.get("image")
-                    if isinstance(manifest_url, list):
-                        manifest_url = manifest_url[0]
-                    prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
-                    if manifest_url.startswith(prefix):
-                        manifest_url = manifest_url[len(prefix):]
-                    html_code = f'''
+                    # Try 'image' first, if not found, then 'manifest'
+                    manifest_url = selected_node_obj.metadata.get("image") or selected_node_obj.metadata.get("manifest")
+                    if manifest_url:
+                        if isinstance(manifest_url, list):
+                            manifest_url = manifest_url[0]
+                        prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
+                        if manifest_url.startswith(prefix):
+                            manifest_url = manifest_url[len(prefix):]
+                        html_code = f'''
 <html>
   <head>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/mirador/dist/css/mirador.min.css">
@@ -953,9 +958,11 @@ def main() -> None:
   </body>
 </html>
 '''
-                    components.html(html_code, height=650)
+                        components.html(html_code, height=650)
+                    else:
+                        st.info("No valid manifest found for the selected entity.")
             else:
-                st.info("No StillImage entity with a manifest found.")
+                st.info("No entity with a manifest found.")
             # Export Options
             st.markdown("### 📥 Export Options")
             col1, col2, col3 = st.columns(3)
@@ -1035,7 +1042,7 @@ def main() -> None:
             - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning and community detection.
             - **Dark Mode:** Toggle for a dark-themed interface with improved readability.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph and preview results.
-            - **IIIF Viewer:** For StillImage nodes, view the associated manifest directly in the app.
+            - **IIIF Viewer:** For entities with a manifest, view the associated manifest directly in the app.
             
             **Usage:**
             - Upload JSON files via the sidebar.

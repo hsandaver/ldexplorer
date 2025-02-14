@@ -85,7 +85,8 @@ RELATIONSHIP_CONFIG: Dict[str, str] = {
     "fieldOfActivity": "#FF4500",
     "educatedAt": "#8B4513",
     "foundedBy": "#FF6347",
-    "containedInPlace": "#F39C12"
+    "containedInPlace": "#F39C12",
+    "owner": "#3498DB"
 }
 
 NODE_TYPE_COLORS: Dict[str, str] = {

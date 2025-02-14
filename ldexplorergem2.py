@@ -480,6 +480,58 @@ def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict
         st.write("No metadata available for this node.")
 
 # -----------------------------------------------------------------------------
+# NEW: JSON‑LD Conversion Helper
+# -----------------------------------------------------------------------------
+def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
+    """
+    Convert a Pyvis network (with net.nodes and net.edges) into a JSON‑LD structure.
+    Each node is represented with an @id and its properties, and for every edge from
+    node A to node B with a relationship label, we add a property "ex:<Relationship>"
+    to node A whose value is an object with "@id": B.
+    """
+    nodes_dict = {}
+    # Process nodes
+    for node in net.nodes:
+        node_id = node.get("id")
+        nodes_dict[node_id] = {
+            "@id": node_id,
+            "label": node.get("label", ""),
+            "x": node.get("x"),
+            "y": node.get("y")
+        }
+        if "types" in node:
+            nodes_dict[node_id]["type"] = node["types"]
+    # Process edges: embed each edge as a property in the source node.
+    for edge in net.edges:
+        source = edge.get("from")
+        target = edge.get("to")
+        rel = edge.get("label", "").strip()  # e.g. "Sameas", "PlaceOfBirth", etc.
+        if not rel:
+            continue
+        # Use a property key in our "ex:" namespace.
+        prop = "ex:" + rel.replace(" ", "")
+        triple = {"@id": target}
+        if prop in nodes_dict[source]:
+            if isinstance(nodes_dict[source][prop], list):
+                nodes_dict[source][prop].append(triple)
+            else:
+                nodes_dict[source][prop] = [nodes_dict[source][prop], triple]
+        else:
+            nodes_dict[source][prop] = triple
+
+    jsonld = {
+        "@context": {
+            "label": "http://www.w3.org/2000/01/rdf-schema#label",
+            "x": "http://example.org/x",
+            "y": "http://example.org/y",
+            "type": "@type",
+            "ex": "http://example.org/"
+        },
+        "@graph": list(nodes_dict.values())
+    }
+    return jsonld
+
+# -----------------------------------------------------------------------------
 # Main Streamlit App
 # -----------------------------------------------------------------------------
 def main() -> None:
@@ -522,9 +574,9 @@ def main() -> None:
     with st.sidebar.expander("File Upload"):
         uploaded_files = st.sidebar.file_uploader(
             label="Upload JSON Files",
-            type=["json"],
+            type=["json", "jsonld"],
             accept_multiple_files=True,
-            help="Select JSON files describing entities and relationships"
+            help="Select JSON files (including JSON‑LD) describing entities and relationships"
         )
         if uploaded_files:
             file_contents = [uploaded_file.read().decode("utf-8") for uploaded_file in uploaded_files]
@@ -567,7 +619,7 @@ def main() -> None:
         )
     
     with st.sidebar.expander("Graph Settings"):
-        graph_settings_file = st.file_uploader("Upload Graph Settings", type=["json"], key="graph_settings_file")
+        graph_settings_file = st.sidebar.file_uploader("Upload Graph Settings", type=["json", "jsonld"], key="graph_settings_file")
         if graph_settings_file is not None:
             try:
                 settings_str = graph_settings_file.read().decode("utf-8")
@@ -600,35 +652,52 @@ def main() -> None:
         )
     
     with st.sidebar.expander("Graph Data Loader"):
-        graph_data_file = st.file_uploader("Upload Graph Data JSON", type=["json"], key="graph_data_file")
+        graph_data_file = st.sidebar.file_uploader("Upload Graph Data JSON", type=["json", "jsonld"], key="graph_data_file")
         if graph_data_file is not None:
             try:
                 graph_data_str = graph_data_file.read().decode("utf-8")
                 graph_data_json = json.loads(graph_data_str)
                 nodes = []
                 id_to_label = {}
-                for node_dict in graph_data_json.get("nodes", []):
-                    node_obj = Node(
-                        id=node_dict.get("id"),
-                        label=node_dict.get("label"),
-                        types=node_dict.get("types", ["Unknown"]),
-                        metadata=node_dict.get("metadata", {}),
-                        edges=[]
-                    )
-                    nodes.append(node_obj)
-                    id_to_label[node_obj.id] = node_obj.label
-                for edge_dict in graph_data_json.get("edges", []):
-                    src = edge_dict.get("from")
-                    dst = edge_dict.get("to")
-                    relationship = edge_dict.get("label", "related")
-                    new_edge = Edge(source=src, target=dst, relationship=relationship)
-                    for node in nodes:
-                        if node.id == src:
-                            node.edges.append(new_edge)
-                            break
+                # Determine the list of nodes based on common JSON‑LD patterns
+                if "@graph" in graph_data_json:
+                    nodes_list = graph_data_json["@graph"]
+                elif "graph" in graph_data_json:
+                    nodes_list = graph_data_json["graph"]
+                elif "@context" in graph_data_json:
+                    nodes_list = [graph_data_json]
+                else:
+                    nodes_list = graph_data_json.get("nodes", [])
+                
+                for node_dict in nodes_list:
+                    node_id = node_dict.get("@id") or node_dict.get("id")
+                    if not node_id:
+                        continue  # Skip nodes without an ID
+                    label = node_dict.get("label") or node_dict.get("name") or node_id
+                    types = node_dict.get("type", ["Unknown"])
+                    if not isinstance(types, list):
+                        types = [types]
+                    # Exclude reserved JSON‑LD keys from metadata
+                    metadata = {k: v for k, v in node_dict.items() if k not in ["@id", "id", "label", "name", "type", "x", "y", "@context"]}
+                    edges = []
+                    # Process properties with an "ex:" prefix as edges
+                    for key, value in node_dict.items():
+                        if key.startswith("ex:"):
+                            rel = key[3:]  # remove the "ex:" prefix
+                            if isinstance(value, list):
+                                for item in value:
+                                    if isinstance(item, dict) and ("@id" in item or "id" in item):
+                                        target = item.get("@id") or item.get("id")
+                                        edges.append(Edge(source=node_id, target=target, relationship=rel))
+                            elif isinstance(value, dict) and ("@id" in value or "id" in value):
+                                target = value.get("@id") or value.get("id")
+                                edges.append(Edge(source=node_id, target=target, relationship=rel))
+                    new_node = Node(id=node_id, label=label, types=types, metadata=node_dict, edges=edges)
+                    nodes.append(new_node)
+                    id_to_label[node_id] = label
                 st.session_state.graph_data = GraphData(nodes=nodes)
                 st.session_state.id_to_label = id_to_label
-                st.sidebar.success("Graph data loaded successfully!")
+                st.sidebar.success("Graph data loaded successfully, nyah~!")
             except Exception as e:
                 st.sidebar.error(f"Error loading graph data: {e}")
     
@@ -956,7 +1025,6 @@ def main() -> None:
                         if manifest_url.startswith(prefix):
                             manifest_url = manifest_url[len(prefix):]
                         if manifest_url.strip() and is_valid_iiif_manifest(manifest_url):
-                            # Log the manifest URL for debugging
                             st.write(f"Using manifest URL: {manifest_url}")
                             html_code = f'''
 <html>
@@ -1001,26 +1069,15 @@ def main() -> None:
                 if st.button("Download Graph as PNG"):
                     st.warning("Exporting as PNG is not supported directly. Please export as HTML and take a screenshot.")
             with col3:
-                if st.button("Download Graph Data as JSON"):
-                    graph_data_json = {
-                        "nodes": [
-                            {"id": node.get('id'), "label": node.get('label'), "types": node.get("types", ["Unknown"]),
-                             "metadata": node.get('title', ''), "x": node.get('x'), "y": node.get('y')}
-                            for node in net.nodes
-                        ],
-                        "edges": [
-                            {"from": edge.get('from'), "to": edge.get('to'), "label": edge.get('label'),
-                             "metadata": edge.get('title', '')}
-                            for edge in net.edges
-                        ]
-                    }
-                    json_str = json.dumps(graph_data_json, indent=2)
-                    st.download_button(
-                        label="Download Graph Data as JSON",
-                        data=json_str,
-                        file_name="graph_data.json",
-                        mime="application/json"
-                    )
+                # NEW: Export graph data as JSON‑LD
+                jsonld_data = convert_graph_to_jsonld(net)
+                jsonld_str = json.dumps(jsonld_data, indent=2)
+                st.download_button(
+                    label="Download Graph Data as JSON‑LD",
+                    data=jsonld_str,
+                    file_name="graph_data.jsonld",
+                    mime="application/ld+json"
+                )
         else:
             st.info("No valid data found. Please check your JSON files.")
     

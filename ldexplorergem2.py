@@ -1,8 +1,15 @@
 #!/usr/bin/env python
 """
 Enhanced Linked Data Network Visualization Application
-Incorporates improvements in UI/UX, including a tabbed interface, grouped sidebar controls,
-dark mode enhancements, improved SPARQL feedback, and better graph editing.
+
+Features:
+- Tabbed interface with grouped sidebar controls
+- Dark mode enhancements
+- Improved SPARQL feedback and graph editing
+- IIIF Viewer support
+- Community detection (optional)
+- Graph export as HTML and JSON‑LD
+
 Author: Huw Sandaver (Original) | Enhancements by ChatGPT
 Date: 2025-02-14
 """
@@ -12,12 +19,10 @@ import json
 import logging
 import traceback
 import time
-from io import StringIO
 from urllib.parse import urlparse, urlunparse
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
-import requests
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
@@ -25,7 +30,6 @@ from rdflib import Graph as RDFGraph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS
 import networkx as nx
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 
 # -----------------------------------------------------------------------------
@@ -55,7 +59,7 @@ class GraphData:
     nodes: List[Node]
 
 # -----------------------------------------------------------------------------
-# Configuration Constants
+# Constants and Configurations
 # -----------------------------------------------------------------------------
 RELATIONSHIP_CONFIG: Dict[str, str] = {
     "relatedPerson": "#7289DA",
@@ -110,13 +114,14 @@ NODE_TYPE_SHAPES: Dict[str, str] = {
 }
 
 DEFAULT_NODE_COLOR = "#D3D3D3"
-EX = Namespace("http://example.org/")  # Custom namespace for RDF
+EX = Namespace("http://example.org/")  # Custom RDF namespace
 
 # -----------------------------------------------------------------------------
-# Performance Monitoring Decorator
+# Decorators
 # -----------------------------------------------------------------------------
 def performance_monitor(func):
     """Decorator to log the performance of functions."""
+    from functools import wraps
     @wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -143,6 +148,7 @@ def remove_fragment(uri: str) -> str:
         return uri
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
+    """Normalize relationship values based on the relationship type."""
     if isinstance(value, dict):
         if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner"}:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
@@ -161,14 +167,14 @@ def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
 def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize a JSON entity:
-      - Remove fragment from 'id'.
-      - Ensure 'prefLabel.en' exists.
-      - Convert 'type' to a list.
-      - Normalize relationships based on RELATIONSHIP_CONFIG.
+      - Remove fragment from 'id'
+      - Ensure 'prefLabel.en' exists
+      - Convert 'type' to a list
+      - Normalize relationships based on RELATIONSHIP_CONFIG
     """
     if not isinstance(data, dict):
         raise ValueError("Invalid data format. Expected a dictionary.")
-
+    
     data['id'] = remove_fragment(data.get('id', ''))
     data.setdefault('prefLabel', {})['en'] = data.get('prefLabel', {}).get('en', data['id'])
 
@@ -193,7 +199,6 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
 def is_valid_iiif_manifest(url: str) -> bool:
     """
     Heuristically determine if a URL is a valid IIIF manifest URL.
-    You can adjust these rules as needed.
     """
     if not url.startswith("http"):
         return False
@@ -201,13 +206,13 @@ def is_valid_iiif_manifest(url: str) -> bool:
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
 
 # -----------------------------------------------------------------------------
-# Data Caching: Parse Entities from File Contents
+# Data Parsing and Caching
 # -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 @performance_monitor
 def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, Dict[str, str], List[str]]:
     """
-    Parse multiple JSON file contents into normalized entities using data classes.
+    Parse multiple JSON file contents into normalized entities.
     Returns a tuple: (GraphData, id_to_label, errors)
     """
     nodes: List[Node] = []
@@ -240,12 +245,11 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
     return GraphData(nodes=nodes), id_to_label, errors
 
 # -----------------------------------------------------------------------------
-# RDF Conversion and SPARQL Querying Helpers
+# RDF and SPARQL Helpers
 # -----------------------------------------------------------------------------
 def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
     """
     Convert GraphData (parsed JSON entities) to an RDF graph.
-    Each entity becomes a subject and triples are added for labels, types, and relationships.
     """
     g = RDFGraph()
     g.bind("ex", EX)
@@ -278,16 +282,16 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
 def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
     """
     Run a SPARQL SELECT query against the RDF graph.
-    Returns a set of subject URIs (as strings) from the first variable.
+    Returns a set of subject URIs as strings.
     """
     result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
-    nodes = {str(row[0]) for row in result if row[0] is not None}
-    return nodes
+    return {str(row[0]) for row in result if row[0] is not None}
 
 # -----------------------------------------------------------------------------
 # Graph Building Helpers
 # -----------------------------------------------------------------------------
-def add_node(net: Network, node_id: str, label: str, entity_types: List[str], color: str, metadata: Dict[str, Any],
+def add_node(net: Network, node_id: str, label: str, entity_types: List[str],
+             color: str, metadata: Dict[str, Any],
              search_node: Optional[str] = None, show_labels: bool = True) -> None:
     """
     Add a node to the Pyvis network with enhanced aesthetics.
@@ -317,9 +321,11 @@ def add_node(net: Network, node_id: str, label: str, entity_types: List[str], co
     )
     logging.debug(f"Added node: {label} ({node_id}) with color {color}")
 
-def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: Dict[str, str],
-             search_node: Optional[str] = None) -> None:
-    """Add an edge to the Pyvis network with enhanced styling."""
+def add_edge(net: Network, src: str, dst: str, relationship: str,
+             id_to_label: Dict[str, str], search_node: Optional[str] = None) -> None:
+    """
+    Add an edge to the Pyvis network with enhanced styling.
+    """
     edge_color = RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
     is_search_edge = search_node is not None and (src == search_node or dst == search_node)
@@ -374,8 +380,8 @@ def build_graph(
             continue
         color = next((NODE_TYPE_COLORS.get(t, DEFAULT_NODE_COLOR) for t in node.types), DEFAULT_NODE_COLOR)
         if node.id not in added_nodes:
-            add_node(net, node.id, id_to_label.get(node.id, node.id), node.types, color, node.metadata,
-                     search_node=search_node, show_labels=show_labels)
+            add_node(net, node.id, id_to_label.get(node.id, node.id), node.types,
+                     color, node.metadata, search_node=search_node, show_labels=show_labels)
             added_nodes.add(node.id)
 
     for node in graph_data.nodes:
@@ -480,14 +486,11 @@ def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict
         st.write("No metadata available for this node.")
 
 # -----------------------------------------------------------------------------
-# NEW: JSON‑LD Conversion Helper
+# JSON‑LD Conversion Helper
 # -----------------------------------------------------------------------------
 def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
     """
     Convert a Pyvis network (with net.nodes and net.edges) into a JSON‑LD structure.
-    Each node is represented with an @id and its properties, and for every edge from
-    node A to node B with a relationship label, we add a property "ex:<Relationship>"
-    to node A whose value is an object with "@id": B.
     """
     nodes_dict = {}
     # Process nodes
@@ -508,7 +511,6 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
         rel = edge.get("label", "").strip()  # e.g. "Sameas", "PlaceOfBirth", etc.
         if not rel:
             continue
-        # Use a property key in our "ex:" namespace.
         prop = "ex:" + rel.replace(" ", "")
         triple = {"@id": target}
         if prop in nodes_dict[source]:
@@ -537,7 +539,7 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Linked Data Explorer", page_icon="🕸️", layout="wide")
     
-    # Initialize session state variables if not already set
+    # Initialize session state variables
     if "node_positions" not in st.session_state:
         st.session_state.node_positions = {}
     if "selected_node" not in st.session_state:
@@ -565,10 +567,8 @@ def main() -> None:
             "springLength": 150,
             "springStrength": 0.08
         }
-        
-    # -----------------------------------------------------------------------------
-    # Sidebar: Grouped Controls with Expanders
-    # -----------------------------------------------------------------------------
+    
+    # ----------------- Sidebar Controls -----------------
     st.sidebar.header("Controls")
     
     with st.sidebar.expander("File Upload"):
@@ -619,21 +619,6 @@ def main() -> None:
         )
     
     with st.sidebar.expander("Graph Settings"):
-        graph_settings_file = st.sidebar.file_uploader("Upload Graph Settings", type=["json", "jsonld"], key="graph_settings_file")
-        if graph_settings_file is not None:
-            try:
-                settings_str = graph_settings_file.read().decode("utf-8")
-                settings_json = json.loads(settings_str)
-                st.session_state.node_positions = settings_json.get("node_positions", st.session_state.node_positions)
-                st.session_state.selected_relationships = settings_json.get("selected_relationships", st.session_state.selected_relationships)
-                st.session_state.enable_physics = settings_json.get("enable_physics", st.session_state.enable_physics)
-                st.session_state.filtered_types = settings_json.get("filtered_types", st.session_state.filtered_types)
-                st.session_state.search_term = settings_json.get("search_term", st.session_state.search_term)
-                st.session_state.show_labels = settings_json.get("show_labels", st.session_state.show_labels)
-                st.session_state.physics_params = settings_json.get("physics_params", st.session_state.physics_params)
-                st.sidebar.success("Graph settings uploaded successfully!")
-            except Exception as e:
-                st.sidebar.error(f"Error loading graph settings: {e}")
         graph_settings = {
             "node_positions": st.session_state.node_positions,
             "selected_relationships": st.session_state.selected_relationships,
@@ -651,55 +636,7 @@ def main() -> None:
             mime="application/json"
         )
     
-    with st.sidebar.expander("Graph Data Loader"):
-        graph_data_file = st.sidebar.file_uploader("Upload Graph Data JSON", type=["json", "jsonld"], key="graph_data_file")
-        if graph_data_file is not None:
-            try:
-                graph_data_str = graph_data_file.read().decode("utf-8")
-                graph_data_json = json.loads(graph_data_str)
-                nodes = []
-                id_to_label = {}
-                # Determine the list of nodes based on common JSON‑LD patterns
-                if "@graph" in graph_data_json:
-                    nodes_list = graph_data_json["@graph"]
-                elif "graph" in graph_data_json:
-                    nodes_list = graph_data_json["graph"]
-                elif "@context" in graph_data_json:
-                    nodes_list = [graph_data_json]
-                else:
-                    nodes_list = graph_data_json.get("nodes", [])
-                
-                for node_dict in nodes_list:
-                    node_id = node_dict.get("@id") or node_dict.get("id")
-                    if not node_id:
-                        continue  # Skip nodes without an ID
-                    label = node_dict.get("label") or node_dict.get("name") or node_id
-                    types = node_dict.get("type", ["Unknown"])
-                    if not isinstance(types, list):
-                        types = [types]
-                    # Exclude reserved JSON‑LD keys from metadata
-                    metadata = {k: v for k, v in node_dict.items() if k not in ["@id", "id", "label", "name", "type", "x", "y", "@context"]}
-                    edges = []
-                    # Process properties with an "ex:" prefix as edges
-                    for key, value in node_dict.items():
-                        if key.startswith("ex:"):
-                            rel = key[3:]  # remove the "ex:" prefix
-                            if isinstance(value, list):
-                                for item in value:
-                                    if isinstance(item, dict) and ("@id" in item or "id" in item):
-                                        target = item.get("@id") or item.get("id")
-                                        edges.append(Edge(source=node_id, target=target, relationship=rel))
-                            elif isinstance(value, dict) and ("@id" in value or "id" in value):
-                                target = value.get("@id") or value.get("id")
-                                edges.append(Edge(source=node_id, target=target, relationship=rel))
-                    new_node = Node(id=node_id, label=label, types=types, metadata=node_dict, edges=edges)
-                    nodes.append(new_node)
-                    id_to_label[node_id] = label
-                st.session_state.graph_data = GraphData(nodes=nodes)
-                st.session_state.id_to_label = id_to_label
-                st.sidebar.success("Graph data loaded successfully, nyah~!")
-            except Exception as e:
-                st.sidebar.error(f"Error loading graph data: {e}")
+    # ----------------- (Removed Graph Data Loader Section) -----------------
     
     with st.sidebar.expander("Graph Editing"):
         edit_option = st.radio("Select action", ("Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"))
@@ -827,7 +764,7 @@ def main() -> None:
                         st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
                         st.sidebar.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
     
-    # ------------------ Filter by Entity Types ------------------
+    # ----------------- Filter by Entity Types -----------------
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
         st.session_state.filtered_types = st.sidebar.multiselect(
@@ -863,7 +800,6 @@ def main() -> None:
     else:
         filtered_nodes = None
 
-    # <-- Apply filtering by selected entity types -->
     if st.session_state.filtered_types:
         filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
                             if any(t in st.session_state.filtered_types for t in node.types)}
@@ -871,12 +807,9 @@ def main() -> None:
 
     st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
     
-    # -----------------------------------------------------------------------------
-    # Main Content: Tabbed Interface
-    # -----------------------------------------------------------------------------
+    # ----------------- Main Content: Tabbed Interface -----------------
     tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "About"])
     
-    # ------------------- Tab 1: Graph View -------------------
     with tabs[0]:
         st.header("🕸️ Network Graph")
         if st.session_state.graph_data.nodes:
@@ -895,7 +828,7 @@ def main() -> None:
                     filtered_nodes=filtered_nodes,
                     dark_mode=dark_mode
                 )
-            # Apply manual node positions and fix them if physics is disabled
+            # Apply manual node positions if physics is enabled
             if st.session_state.enable_physics:
                 for node in net.nodes:
                     pos = st.session_state.node_positions.get(node.get("id"))
@@ -904,7 +837,6 @@ def main() -> None:
                         node['y'] = pos['y']
                         node['fixed'] = True
             else:
-                # Disable physics and use spring layout
                 if isinstance(net.options, dict):
                     net.options["physics"]["enabled"] = False
                 G = nx.Graph()
@@ -964,6 +896,7 @@ def main() -> None:
                 with open(output_path, "r", encoding="utf-8") as f:
                     graph_html = f.read()
                 os.remove(output_path)
+                st.session_state.graph_html = graph_html  # Save for potential export
                 components.html(graph_html, height=750, scrolling=True)
             except Exception as e:
                 st.error(f"Graph generation failed: {e}")
@@ -1052,24 +985,20 @@ def main() -> None:
                         st.info("No valid IIIF manifest found for the selected entity.")
             else:
                 st.info("No entity with a manifest found.")
-            # Export Options
+            # Export Options (PNG export removed)
             st.markdown("### 📥 Export Options")
-            col1, col2, col3 = st.columns(3)
+            col1, col3 = st.columns(2)
             with col1:
-                if 'graph_html' in locals():
+                if "graph_html" in st.session_state:
                     st.download_button(
                         label="Download Graph as HTML",
-                        data=graph_html,
+                        data=st.session_state.graph_html,
                         file_name="network_graph.html",
                         mime="text/html"
                     )
                 else:
                     st.info("Please generate the graph first to download.")
-            with col2:
-                if st.button("Download Graph as PNG"):
-                    st.warning("Exporting as PNG is not supported directly. Please export as HTML and take a screenshot.")
             with col3:
-                # NEW: Export graph data as JSON‑LD
                 jsonld_data = convert_graph_to_jsonld(net)
                 jsonld_str = json.dumps(jsonld_data, indent=2)
                 st.download_button(
@@ -1081,7 +1010,6 @@ def main() -> None:
         else:
             st.info("No valid data found. Please check your JSON files.")
     
-    # ------------------- Tab 2: Data View -------------------
     with tabs[1]:
         st.header("Data View")
         st.subheader("Graph Nodes")
@@ -1091,7 +1019,6 @@ def main() -> None:
         else:
             st.info("No data available. Please upload JSON files.")
     
-    # ------------------- Tab 3: SPARQL Query -------------------
     with tabs[2]:
         st.header("SPARQL Query")
         st.markdown("Enter a SPARQL SELECT query in the sidebar and view the results here.")
@@ -1105,7 +1032,6 @@ def main() -> None:
         else:
             st.info("No query entered.")
     
-    # ------------------- Tab 4: About -------------------
     with tabs[3]:
         st.header("About Linked Data Explorer")
         st.markdown(
@@ -1121,6 +1047,7 @@ def main() -> None:
             - **Dark Mode:** Toggle for a dark-themed interface with improved readability.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph and preview results.
             - **IIIF Viewer:** For entities with a manifest, view the associated manifest directly in the app.
+            - **Export Options:** Download the graph as HTML or JSON‑LD.
             
             **Usage:**
             - Upload JSON files via the sidebar.
@@ -1132,9 +1059,6 @@ def main() -> None:
             """
         )
     
-    # -----------------------------------------------------------------------------
-    # Global Style Adjustments for Dark Mode and Layout
-    # -----------------------------------------------------------------------------
     st.markdown(
         f"""
         <style>

@@ -143,7 +143,7 @@ def remove_fragment(uri: str) -> str:
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     if isinstance(value, dict):
-        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator"}:
+        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner"}:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
         elif rel == 'succeededBy':
             return remove_fragment(value.get('resultedIn', ''))

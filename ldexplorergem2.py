@@ -55,7 +55,7 @@ class GraphData:
     nodes: List[Node]
 
 # -----------------------------------------------------------------------------
-# Configuration Constants (Consider moving these to a separate config.py for maintainability)
+# Configuration Constants
 # -----------------------------------------------------------------------------
 RELATIONSHIP_CONFIG: Dict[str, str] = {
     "relatedPerson": "#7289DA",
@@ -784,7 +784,7 @@ def main() -> None:
     else:
         filtered_nodes = None
 
-    # <-- FIX: Apply filtering by selected entity types -->
+    # <-- Apply filtering by selected entity types -->
     if st.session_state.filtered_types:
         filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
                             if any(t in st.session_state.filtered_types for t in node.types)}
@@ -921,29 +921,30 @@ def main() -> None:
                 st.map(df_places)
             else:
                 st.info("No entities with valid coordinates found for the map view.")
-            # IIIF Viewer Enhancementst.subheader("IIIF Viewer")
-iiif_nodes = [
-    node for node in st.session_state.graph_data.nodes
-    if isinstance(node.metadata, dict) and ("image" in node.metadata or "manifest" in node.metadata)
-]
-if iiif_nodes:
-    selected_iiif = st.selectbox(
-        "Select an entity with a manifest for IIIF Viewer",
-        options=[node.id for node in iiif_nodes],
-        format_func=lambda x: st.session_state.id_to_label.get(x, x)
-    )
-    selected_node_obj = next((node for node in iiif_nodes if node.id == selected_iiif), None)
-    if selected_node_obj:
-        manifest_url = selected_node_obj.metadata.get("image") or selected_node_obj.metadata.get("manifest")
-        if manifest_url and isinstance(manifest_url, (str, list)):
-            if isinstance(manifest_url, list):
-                manifest_url = manifest_url[0]
-            prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
-            if manifest_url.startswith(prefix):
-                manifest_url = manifest_url[len(prefix):]
-            # Only render the viewer if we have a non-empty manifest URL
-            if manifest_url.strip():
-                html_code = f'''
+            # IIIF Viewer Enhancement
+            st.subheader("IIIF Viewer")
+            iiif_nodes = [
+                node for node in st.session_state.graph_data.nodes
+                if isinstance(node.metadata, dict) and ("image" in node.metadata or "manifest" in node.metadata)
+            ]
+            if iiif_nodes:
+                selected_iiif = st.selectbox(
+                    "Select an entity with a manifest for IIIF Viewer",
+                    options=[node.id for node in iiif_nodes],
+                    format_func=lambda x: st.session_state.id_to_label.get(x, x)
+                )
+                selected_node_obj = next((node for node in iiif_nodes if node.id == selected_iiif), None)
+                if selected_node_obj:
+                    manifest_url = selected_node_obj.metadata.get("image") or selected_node_obj.metadata.get("manifest")
+                    if manifest_url and isinstance(manifest_url, (str, list)):
+                        if isinstance(manifest_url, list):
+                            manifest_url = manifest_url[0]
+                        prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
+                        if manifest_url.startswith(prefix):
+                            manifest_url = manifest_url[len(prefix):]
+                        # Only render the viewer if we have a non-empty manifest URL
+                        if manifest_url.strip():
+                            html_code = f'''
 <html>
   <head>
     <link rel="stylesheet" type="text/css" href="https://unpkg.com/mirador/dist/css/mirador.min.css">
@@ -960,13 +961,13 @@ if iiif_nodes:
   </body>
 </html>
 '''
-                components.html(html_code, height=650)
+                            components.html(html_code, height=650)
+                        else:
+                            st.info("No valid manifest found for the selected entity.")
+                    else:
+                        st.info("No valid manifest found for the selected entity.")
             else:
-                st.info("No valid manifest found for the selected entity.")
-        else:
-            st.info("No valid manifest found for the selected entity.")
-else:
-    st.info("No entity with a manifest found.")
+                st.info("No entity with a manifest found.")
             # Export Options
             st.markdown("### 📥 Export Options")
             col1, col2, col3 = st.columns(3)

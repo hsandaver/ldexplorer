@@ -3,7 +3,7 @@
 Linked Data Network Visualization Application with Improved Aesthetics (No Nested Expanders)
 
 Author: ChatGPT
-Version: 1.3.1
+Version: 1.3.2
 Date: 2025-02-15
 """
 
@@ -101,7 +101,7 @@ DEFAULT_NODE_COLOR = "#D3D3D3"
 EX = Namespace("http://example.org/")  # Custom RDF namespace
 
 # -----------------------------------------------------------------------------
-# Data Classes (Module: Data Structures)
+# Data Classes
 # -----------------------------------------------------------------------------
 @dataclass
 class Edge:
@@ -122,14 +122,12 @@ class GraphData:
     nodes: List[Node]
 
 # -----------------------------------------------------------------------------
-# Utility Functions Module
+# Utility Functions
 # -----------------------------------------------------------------------------
 def log_error(message: str) -> None:
-    """Log an error message."""
     logging.error(message)
 
 def remove_fragment(uri: str) -> str:
-    """Remove URI fragment for consistency."""
     try:
         parsed = urlparse(uri)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ''))
@@ -138,12 +136,8 @@ def remove_fragment(uri: str) -> str:
         return uri
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
-    """Normalize relationship value based on its type."""
     if isinstance(value, dict):
-        if rel in {
-            "spouse", "studentOf", "employedBy", "educatedAt", 
-            "contributor", "draftsman", "creator", "owner"
-        }:
+        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner"}:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
         elif rel == 'succeededBy':
             return remove_fragment(value.get('resultedIn', ''))
@@ -158,7 +152,6 @@ def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     return None
 
 def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize a data dictionary representing an entity."""
     if not isinstance(data, dict):
         raise ValueError("Invalid data format. Expected a dictionary.")
     
@@ -184,22 +177,16 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 def is_valid_iiif_manifest(url: str) -> bool:
-    """Check if a URL is a valid IIIF manifest."""
     if not url.startswith("http"):
         return False
     lower_url = url.lower()
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
 
 # -----------------------------------------------------------------------------
-# Data Parsing and Caching Module
+# Data Parsing and Caching
 # -----------------------------------------------------------------------------
 @st.cache_data
 def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, Dict[str, str], List[str]]:
-    """
-    Parse uploaded JSON contents into GraphData.
-    
-    Returns a tuple containing GraphData, a mapping from node IDs to labels, and a list of errors.
-    """
     nodes: List[Node] = []
     id_to_label: Dict[str, str] = {}
     errors: List[str] = []
@@ -236,10 +223,9 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
     return GraphData(nodes=nodes), id_to_label, errors
 
 # -----------------------------------------------------------------------------
-# RDF and SPARQL Helpers Module
+# RDF and SPARQL Helpers
 # -----------------------------------------------------------------------------
 def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
-    """Convert GraphData into an RDF graph."""
     g = RDFGraph()
     g.bind("ex", EX)
     for node in graph_data.nodes:
@@ -269,12 +255,11 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
     return g
 
 def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
-    """Run a SPARQL SELECT query on the provided RDF graph."""
     result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
     return {str(row[0]) for row in result if row[0] is not None}
 
 # -----------------------------------------------------------------------------
-# Graph Building Helpers Module
+# Graph Building Helpers
 # -----------------------------------------------------------------------------
 def add_node(
     net: Network,
@@ -286,9 +271,6 @@ def add_node(
     search_node: Optional[str] = None,
     show_labels: bool = True
 ) -> None:
-    """
-    Add a node to the pyvis network with dynamic styling.
-    """
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
     description = ""
     if "description" in metadata:
@@ -324,9 +306,6 @@ def add_edge(
     id_to_label: Dict[str, str],
     search_node: Optional[str] = None
 ) -> None:
-    """
-    Add an edge to the pyvis network with styling based on relationship type.
-    """
     edge_color = RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
     is_search_edge = search_node is not None and (src == search_node or dst == search_node)
@@ -353,9 +332,6 @@ def build_graph(
     filtered_nodes: Optional[Set[str]] = None,
     community_detection: bool = False
 ) -> Network:
-    """
-    Build the pyvis network graph from GraphData.
-    """
     net = Network(
         height="750px",
         width="100%",
@@ -437,9 +413,7 @@ def build_graph(
                 "align": "middle",
                 "color": "#343a40"
             },
-            "smooth": {
-                "type": "continuous"
-            }
+            "smooth": {"type": "continuous"}
         },
         "physics": {
             "enabled": False,
@@ -463,7 +437,7 @@ def build_graph(
     }
     net.options = default_options
 
-    # Right-click context and drag-end custom JS
+    # Append custom JS for context and drag-end events
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -490,9 +464,6 @@ def build_graph(
     return net
 
 def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[str, str]) -> str:
-    """
-    Create an HTML legend for relationships and node types.
-    """
     relationship_items = "".join(
         f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>"
         for rel, color in relationship_colors.items()
@@ -514,7 +485,6 @@ def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[s
     )
 
 def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict[str, str]) -> None:
-    """Display metadata for a selected node."""
     st.markdown("#### Node Metadata")
     node_obj = next((node for node in graph_data.nodes if node.id == node_id), None)
     if node_obj:
@@ -530,9 +500,6 @@ def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict
         st.write("No metadata available for this node.")
 
 def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
-    """
-    Convert the pyvis network graph into JSON‑LD format.
-    """
     nodes_dict = {}
     for node in net.nodes:
         node_id = node.get("id")
@@ -573,12 +540,9 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
     return jsonld
 
 # -----------------------------------------------------------------------------
-# Main Streamlit App (UI Module)
+# Main Streamlit App
 # -----------------------------------------------------------------------------
 def main() -> None:
-    """Main entry point for the Streamlit app."""
-
-    # Minimal custom CSS for a cleaner, lighter look
     custom_css = """
     <style>
         .stApp {
@@ -620,7 +584,6 @@ def main() -> None:
         .stTabs [role="tab"] {
             font-weight: 600;
         }
-        /* This adjusts the color of the top bar (where the app name is). */
         header[data-testid="stHeader"] {
             background: #f8f9fa;
         }
@@ -628,23 +591,20 @@ def main() -> None:
     """
     st.markdown(custom_css, unsafe_allow_html=True)
 
-    # === Add a main title and a short caption
     st.title("Linked Data Explorer")
     st.caption("Visualize and navigate your linked data in style!")
 
-    # === Optional help/info expander at the top
     with st.expander("How to Use This App"):
-        st.write("1. Upload your JSON or JSON-LD files in the **File Upload** section on the sidebar.")
-        st.write("2. Adjust visualization settings like physics, or filter by entity types.")
+        st.write("1. Upload your JSON or JSON‑LD files in the **File Upload** section on the sidebar.")
+        st.write("2. Adjust visualization settings like physics or filter by entity types.")
         st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes.")
         st.write("4. Explore the graph in the **Graph View** tab below!")
         st.write("5. You can also position nodes manually and even reset positions if things get messy.")
 
-    # If streamlit-ace is not installed, let the user know in the sidebar
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
 
-    # Initialize session state variables if not already set
+    # Initialize session state variables
     if "node_positions" not in st.session_state:
         st.session_state.node_positions = {}
     if "selected_node" not in st.session_state:
@@ -701,7 +661,6 @@ def main() -> None:
     with st.sidebar.expander("Visualization Settings"):
         community_detection = st.checkbox("Enable Community Detection", value=False, key="community_detection")
         
-        # Physics Presets
         physics_presets = {
             "Default (Balanced)": {"gravity": -50, "centralGravity": 0.01, "springLength": 150, "springStrength": 0.08},
             "High Gravity (Clustering)": {"gravity": -100, "centralGravity": 0.05, "springLength": 100, "springStrength": 0.15},
@@ -718,7 +677,6 @@ def main() -> None:
             st.session_state.physics_params = physics_presets[selected_preset]
             st.info("Physics parameters set to preset: " + selected_preset)
         else:
-            # Just use a subheader (not an expander) to avoid nesting errors
             st.subheader("Advanced Physics Settings")
             st.session_state.physics_params["gravity"] = st.number_input(
                 "Gravity",
@@ -756,7 +714,7 @@ def main() -> None:
                 submitted = st.form_submit_button("Add Node")
                 if submitted:
                     if new_node_label:
-                        new_node_id = f"node_{int(time.time())}"  # auto-generated ID
+                        new_node_id = f"node_{int(time.time())}"
                         new_node = Node(
                             id=new_node_id,
                             label=new_node_label,
@@ -770,7 +728,7 @@ def main() -> None:
                         )
                         st.session_state.graph_data.nodes.append(new_node)
                         st.session_state.id_to_label[new_node_id] = new_node_label
-                        st.toast(f"Node '{new_node_label}' added!", icon="✅")
+                        st.success(f"Node '{new_node_label}' added!")
                     else:
                         st.error("Please provide a Node Label.")
 
@@ -785,7 +743,7 @@ def main() -> None:
                     for node in st.session_state.graph_data.nodes:
                         node.edges = [edge for edge in node.edges if edge.target != selected_to_delete]
                     st.session_state.id_to_label.pop(selected_to_delete, None)
-                    st.toast(f"Node '{selected_to_delete}' deleted.", icon="✅")
+                    st.success(f"Node '{selected_to_delete}' deleted.")
             else:
                 st.info("No nodes available to delete.")
 
@@ -809,7 +767,7 @@ def main() -> None:
                             node_obj.types = [new_type]
                             node_obj.metadata["prefLabel"]["en"] = new_label
                             st.session_state.id_to_label[selected_to_modify] = new_label
-                            st.toast(f"Node '{selected_to_modify}' modified.", icon="✅")
+                            st.success(f"Node '{selected_to_modify}' modified.")
             else:
                 st.info("No nodes available to modify.")
 
@@ -828,7 +786,7 @@ def main() -> None:
                                     target=target_node, 
                                     relationship=relationship
                                 ))
-                        st.toast(f"Edge '{relationship}' from '{source_node}' to '{target_node}' added.", icon="✅")
+                        st.success(f"Edge '{relationship}' from '{source_node}' to '{target_node}' added.")
             else:
                 st.info("No nodes available to add an edge.")
 
@@ -846,7 +804,7 @@ def main() -> None:
                                 e for e in node.edges 
                                 if (e.source, e.target, e.relationship) != edge_to_delete
                             ]
-                    st.toast("Edge deleted.", icon="✅")
+                    st.success("Edge deleted.")
             else:
                 st.info("No edges available to delete.")
     
@@ -867,17 +825,11 @@ def main() -> None:
                 y_pos = st.number_input("Y Position", value=current_pos["y"], step=10.0)
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
-                    st.toast(
-                        f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})",
-                        icon="✅"
-                    )
-
-        # --- Reset positions button ---
+                    st.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
         if st.button("Reset Node Positions"):
             st.session_state.node_positions = {}
             st.experimental_rerun()
 
-    # ---------------- Filter by Entity Types and SPARQL Query ----------------
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
         default_types = [t for t in ["Person", "Organization"] if t in all_types]
@@ -932,9 +884,6 @@ def main() -> None:
         }
         filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
 
-    # (REMOVED the old legend call from the sidebar)
-
-    # -------------------- Main Content: Tabbed Interface --------------------
     tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "About"])
     
     with tabs[0]:
@@ -946,11 +895,8 @@ def main() -> None:
                     id_to_label=st.session_state.id_to_label,
                     selected_relationships=st.session_state.selected_relationships,
                     search_node=next(
-                        (
-                            node.id 
-                            for node in st.session_state.graph_data.nodes 
-                            if node.label.lower() == st.session_state.search_term.lower()
-                        ),
+                        (node.id for node in st.session_state.graph_data.nodes 
+                         if node.label.lower() == st.session_state.search_term.lower()),
                         None
                     ),
                     node_positions=st.session_state.node_positions,
@@ -958,7 +904,6 @@ def main() -> None:
                     filtered_nodes=filtered_nodes,
                     community_detection=community_detection
                 )
-            # Apply manual positions if available
             if st.session_state.enable_physics:
                 for node in net.nodes:
                     pos = st.session_state.node_positions.get(node.get("id"))
@@ -967,7 +912,6 @@ def main() -> None:
                         node['y'] = pos['y']
                         node['fixed'] = True
             else:
-                # Basic spring layout
                 G = nx.Graph()
                 for node in net.nodes:
                     G.add_node(node["id"])
@@ -987,7 +931,6 @@ def main() -> None:
                     node['fixed'] = True
                     node['physics'] = False
             if community_detection:
-                # Basic community detection
                 G = nx.Graph()
                 for node in net.nodes:
                     G.add_node(node["id"])
@@ -1017,22 +960,16 @@ def main() -> None:
             if len(net.nodes) > 50 and st.session_state.show_labels:
                 st.info("Graph has many nodes. Consider toggling 'Show Node Labels' off for better readability.")
             try:
-                output_path = "network_graph.html"
-                net.save_graph(output_path)
-                with open(output_path, "r", encoding="utf-8") as f:
-                    graph_html = f.read()
-                os.remove(output_path)
+                # Directly use the HTML generated by pyvis without file I/O
+                graph_html = net.html
                 st.session_state.graph_html = graph_html
                 components.html(graph_html, height=750, scrolling=True)
             except Exception as e:
                 st.error(f"Graph generation failed: {e}")
 
-            # === Display the legend right after the graph ===
             st.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
-
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
             
-            # Node metadata
             if st.session_state.selected_node:
                 display_node_metadata(
                     st.session_state.selected_node, 
@@ -1043,7 +980,6 @@ def main() -> None:
                 st.markdown("#### Node Metadata")
                 st.info("Select a node from the sidebar to view its metadata.")
             
-            # Map View
             place_locations = []
             for node in st.session_state.graph_data.nodes:
                 if isinstance(node.metadata, dict) and "geographicCoordinates" in node.metadata:
@@ -1074,7 +1010,6 @@ def main() -> None:
             else:
                 st.info("No entities with valid coordinates found for map view.")
             
-            # IIIF Viewer
             st.subheader("IIIF Viewer")
             iiif_nodes = [
                 node for node in st.session_state.graph_data.nodes
@@ -1124,7 +1059,6 @@ def main() -> None:
             else:
                 st.info("No entity with a manifest found.")
             
-            # Export Options
             with st.expander("Export Options", expanded=True):
                 if "graph_html" in st.session_state:
                     st.download_button(
@@ -1189,7 +1123,7 @@ def main() -> None:
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Version:** 1.3.1  
+            **Version:** 1.3.2  
             **Author:** ChatGPT  
             **Contact:** example@example.com
             

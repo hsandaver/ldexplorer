@@ -3,3 +3,4 @@ streamlit>=1.10.0
 pyvis>=0.2.0
 rdflib>=6.0.0
 networkx>=2.6.0
+streamlit-ace

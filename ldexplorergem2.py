@@ -2,7 +2,7 @@
 """
 Linked Data Network Visualization Application with Improved Aesthetics (No Nested Expanders)
 
-Author: ChatGPT
+Author: Huw Sandaver w/ enhancements and suggestions by ChatGPT
 Version: 1.3.5
 Date: 2025-02-15
 """
@@ -1171,8 +1171,8 @@ def main() -> None:
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
             **Version:** 1.3.5  
-            **Author:** ChatGPT  
-            **Contact:** example@example.com
+            **Author:** Huw Sandaver w/ enhancements and suggestions by ChatGPT  
+            **Contact:** hsandaver@alumni.unimelb.edu.au
             
             Enjoy exploring your linked data!
             """

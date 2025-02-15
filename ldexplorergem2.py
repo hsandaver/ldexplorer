@@ -3,7 +3,7 @@
 Linked Data Network Visualization Application with Improved Aesthetics (No Nested Expanders)
 
 Author: ChatGPT
-Version: 1.3.2
+Version: 1.3.3
 Date: 2025-02-15
 """
 
@@ -461,83 +461,41 @@ def build_graph(
     </script>
     """
     net.html = net.generate_html() + custom_js
+
+    # Always apply manual positions if provided
+    if node_positions:
+        for node in net.nodes:
+            pos = node_positions.get(node.get("id"))
+            if pos:
+                node['x'] = pos['x']
+                node['y'] = pos['y']
+                node['fixed'] = True
+                node['physics'] = False
+
+    # Community Detection: reassign node colors based on detected communities
+    if community_detection:
+        G = nx.Graph()
+        for node in net.nodes:
+            G.add_node(node["id"])
+        for edge in net.edges:
+            G.add_edge(edge["from"], edge["to"])
+        try:
+            communities = list(nx.algorithms.community.greedy_modularity_communities(G))
+            community_colors = [
+                "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+                "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+            ]
+            community_map: Dict[str, str] = {}
+            for i, comm in enumerate(communities):
+                for n in comm:
+                    community_map[n] = community_colors[i % len(community_colors)]
+            for node in net.nodes:
+                if node["id"] in community_map:
+                    node["color"] = community_map[node["id"]]
+        except Exception as e:
+            st.error(f"Community detection failed: {e}")
+
     return net
-
-def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[str, str]) -> str:
-    relationship_items = "".join(
-        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>"
-        for rel, color in relationship_colors.items()
-    )
-    node_type_items = "".join(
-        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {ntype}</li>"
-        for ntype, color in node_type_colors.items()
-    )
-    return (
-        f"<h4>Legends</h4>"
-        f"<div style='display:flex;'>"
-        f"<ul style='list-style: none; padding: 0; margin-right: 20px;'>"
-        f"<strong>Relationships</strong>{relationship_items}"
-        f"</ul>"
-        f"<ul style='list-style: none; padding: 0;'>"
-        f"<strong>Node Types</strong>{node_type_items}"
-        f"</ul>"
-        f"</div>"
-    )
-
-def display_node_metadata(node_id: str, graph_data: GraphData, id_to_label: Dict[str, str]) -> None:
-    st.markdown("#### Node Metadata")
-    node_obj = next((node for node in graph_data.nodes if node.id == node_id), None)
-    if node_obj:
-        st.markdown(f"**Label:** {id_to_label.get(node_obj.id, node_obj.id)}")
-        if isinstance(node_obj.metadata, dict):
-            for key, value in node_obj.metadata.items():
-                if key == 'prefLabel':
-                    continue
-                st.markdown(f"**{key}:** {value}")
-        else:
-            st.write("Metadata:", node_obj.metadata)
-    else:
-        st.write("No metadata available for this node.")
-
-def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
-    nodes_dict = {}
-    for node in net.nodes:
-        node_id = node.get("id")
-        nodes_dict[node_id] = {
-            "@id": node_id,
-            "label": node.get("label", ""),
-            "x": node.get("x"),
-            "y": node.get("y")
-        }
-        if "types" in node:
-            nodes_dict[node_id]["type"] = node["types"]
-    for edge in net.edges:
-        source = edge.get("from")
-        target = edge.get("to")
-        rel = edge.get("label", "").strip()
-        if not rel:
-            continue
-        prop = "ex:" + rel.replace(" ", "")
-        triple = {"@id": target}
-        if prop in nodes_dict[source]:
-            if isinstance(nodes_dict[source][prop], list):
-                nodes_dict[source][prop].append(triple)
-            else:
-                nodes_dict[source][prop] = [nodes_dict[source][prop], triple]
-        else:
-            nodes_dict[source][prop] = triple
-
-    jsonld = {
-        "@context": {
-            "label": "http://www.w3.org/2000/01/rdf-schema#label",
-            "x": "http://example.org/x",
-            "y": "http://example.org/y",
-            "type": "@type",
-            "ex": "http://example.org/"
-        },
-        "@graph": list(nodes_dict.values())
-    }
-    return jsonld
 
 # -----------------------------------------------------------------------------
 # Main Streamlit App
@@ -599,7 +557,7 @@ def main() -> None:
         st.write("2. Adjust visualization settings like physics or filter by entity types.")
         st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes.")
         st.write("4. Explore the graph in the **Graph View** tab below!")
-        st.write("5. You can also position nodes manually and even reset positions if things get messy.")
+        st.write("5. Manually set node positions using the sidebar.")
 
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
@@ -825,10 +783,9 @@ def main() -> None:
                 y_pos = st.number_input("Y Position", value=current_pos["y"], step=10.0)
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
-                    st.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
-        if st.button("Reset Node Positions"):
-            st.session_state.node_positions = {}
-            st.experimental_rerun()
+                    st.success(
+                        f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})"
+                    )
 
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
@@ -904,63 +861,12 @@ def main() -> None:
                     filtered_nodes=filtered_nodes,
                     community_detection=community_detection
                 )
-            if st.session_state.enable_physics:
-                for node in net.nodes:
-                    pos = st.session_state.node_positions.get(node.get("id"))
-                    if pos:
-                        node['x'] = pos['x']
-                        node['y'] = pos['y']
-                        node['fixed'] = True
-            else:
-                G = nx.Graph()
-                for node in net.nodes:
-                    G.add_node(node["id"])
-                for edge in net.edges:
-                    G.add_edge(edge["from"], edge["to"])
-                iterations = 20 if len(G.nodes) <= 50 else 50
-                pos = nx.spring_layout(G, k=0.15, iterations=iterations, seed=42)
-                for node in net.nodes:
-                    node_id = node["id"]
-                    if st.session_state.node_positions.get(node_id):
-                        node['x'] = st.session_state.node_positions[node_id]["x"]
-                        node['y'] = st.session_state.node_positions[node_id]["y"]
-                    else:
-                        p = pos[node_id]
-                        node['x'] = p[0] * 500
-                        node['y'] = p[1] * 500
-                    node['fixed'] = True
-                    node['physics'] = False
+            # Manual positions have already been applied in build_graph.
             if community_detection:
-                G = nx.Graph()
-                for node in net.nodes:
-                    G.add_node(node["id"])
-                for edge in net.edges:
-                    G.add_edge(edge["from"], edge["to"])
-                try:
-                    communities = list(nx.algorithms.community.greedy_modularity_communities(G))
-                    community_colors = [
-                        "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-                        "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
-                    ]
-                    community_map: Dict[str, str] = {}
-                    for i, comm in enumerate(communities):
-                        for n in comm:
-                            community_map[n] = community_colors[i % len(community_colors)]
-                    for node in net.nodes:
-                        if node["id"] in community_map:
-                            node["color"] = community_map[node["id"]]
-                except Exception as e:
-                    st.error(f"Community detection failed: {e}")
-            if isinstance(net.options, dict):
-                net.options["configure"] = {
-                    "enabled": True,
-                    "filter": ["physics"],
-                    "showButton": True
-                }
+                st.info("Community detection applied to node colors.")
             if len(net.nodes) > 50 and st.session_state.show_labels:
                 st.info("Graph has many nodes. Consider toggling 'Show Node Labels' off for better readability.")
             try:
-                # Directly use the HTML generated by pyvis without file I/O
                 graph_html = net.html
                 st.session_state.graph_html = graph_html
                 components.html(graph_html, height=750, scrolling=True)
@@ -971,11 +877,20 @@ def main() -> None:
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
             
             if st.session_state.selected_node:
-                display_node_metadata(
-                    st.session_state.selected_node, 
-                    st.session_state.graph_data, 
-                    st.session_state.id_to_label
-                )
+                from pprint import pformat
+                st.markdown("#### Node Metadata")
+                node_obj = next((node for node in st.session_state.graph_data.nodes if node.id == st.session_state.selected_node), None)
+                if node_obj:
+                    st.markdown(f"**Label:** {st.session_state.id_to_label.get(node_obj.id, node_obj.id)}")
+                    if isinstance(node_obj.metadata, dict):
+                        for key, value in node_obj.metadata.items():
+                            if key == 'prefLabel':
+                                continue
+                            st.markdown(f"**{key}:** {value}")
+                    else:
+                        st.write("Metadata:", node_obj.metadata)
+                else:
+                    st.write("No metadata available for this node.")
             else:
                 st.markdown("#### Node Metadata")
                 st.info("Select a node from the sidebar to view its metadata.")
@@ -1123,7 +1038,7 @@ def main() -> None:
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Version:** 1.3.2  
+            **Version:** 1.3.3  
             **Author:** ChatGPT  
             **Contact:** example@example.com
             

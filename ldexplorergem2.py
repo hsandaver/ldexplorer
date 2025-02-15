@@ -90,6 +90,7 @@ NODE_TYPE_COLORS: Dict[str, str] = {
     "StillImage": "#FFD700",
     "Event": "#DDA0DD",
     "Work": "#20B2AA",
+    "AdministrativeArea": "#FFB6C1",
     "Unknown": "#D3D3D3"
 }
 
@@ -100,6 +101,7 @@ NODE_TYPE_SHAPES: Dict[str, str] = {
     "StillImage": "dot",
     "Event": "star",
     "Work": "ellipse",
+    "AdministrativeArea": "diamond"
     "Unknown": "dot"
 }
 

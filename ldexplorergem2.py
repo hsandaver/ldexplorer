@@ -3,7 +3,7 @@
 Linked Data Network Visualization Application with Improved Aesthetics (No Nested Expanders)
 
 Author: ChatGPT
-Version: 1.3.4
+Version: 1.3.5
 Date: 2025-02-15
 """
 
@@ -162,7 +162,7 @@ def is_valid_iiif_manifest(url: str) -> bool:
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
 
 # -----------------------------------------------------------------------------
-# Create Legends Function (now defined in global scope)
+# Create Legends Function
 # -----------------------------------------------------------------------------
 def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[str, str]) -> str:
     relationship_items = "".join(
@@ -521,9 +521,52 @@ def build_graph(
         except Exception as e:
             st.error(f"Community detection failed: {e}")
 
-    # Now generate HTML after all modifications
+    # Now generate HTML after modifications
     net.html = net.generate_html() + custom_js
     return net
+
+# -----------------------------------------------------------------------------
+# Convert Graph to JSON‑LD
+# -----------------------------------------------------------------------------
+def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
+    nodes_dict = {}
+    for node in net.nodes:
+        node_id = node.get("id")
+        nodes_dict[node_id] = {
+            "@id": node_id,
+            "label": node.get("label", ""),
+            "x": node.get("x"),
+            "y": node.get("y")
+        }
+        if "types" in node:
+            nodes_dict[node_id]["type"] = node["types"]
+    for edge in net.edges:
+        source = edge.get("from")
+        target = edge.get("to")
+        rel = edge.get("label", "").strip()
+        if not rel:
+            continue
+        prop = "ex:" + rel.replace(" ", "")
+        triple = {"@id": target}
+        if prop in nodes_dict[source]:
+            if isinstance(nodes_dict[source][prop], list):
+                nodes_dict[source][prop].append(triple)
+            else:
+                nodes_dict[source][prop] = [nodes_dict[source][prop], triple]
+        else:
+            nodes_dict[source][prop] = triple
+
+    jsonld = {
+        "@context": {
+            "label": "http://www.w3.org/2000/01/rdf-schema#label",
+            "x": "http://example.org/x",
+            "y": "http://example.org/y",
+            "type": "@type",
+            "ex": "http://example.org/"
+        },
+        "@graph": list(nodes_dict.values())
+    }
+    return jsonld
 
 # -----------------------------------------------------------------------------
 # Main Streamlit App
@@ -1062,7 +1105,7 @@ def main() -> None:
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Version:** 1.3.4  
+            **Version:** 1.3.5  
             **Author:** ChatGPT  
             **Contact:** example@example.com
             

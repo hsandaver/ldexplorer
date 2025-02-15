@@ -130,7 +130,7 @@ def custom_community_detection(G: nx.Graph, max_iter: int = 5) -> List[Set[str]]
                 total_deg = G.degree(v)
                 # Count neighbors within the community
                 internal_deg = sum(1 for nb in G.neighbors(v) if nb in comm)
-                # If a node has no neighbors, we consider it non-weak.
+                # If a node has no neighbors, consider it non-weak.
                 if total_deg == 0:
                     strong_nodes.add(v)
                     continue
@@ -205,8 +205,11 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     if 'type' in data:
         data['type'] = data['type'] if isinstance(data['type'], list) else [data['type']]
 
+    # For timeline-related fields, preserve original data so that detailed date info is retained.
     for rel in list(data.keys()):
         if rel not in RELATIONSHIP_CONFIG:
+            continue
+        if rel in ["educatedAt", "employedBy", "dateOfBirth", "dateOfDeath"]:
             continue
         values = data[rel]
         normalized_values = []
@@ -686,7 +689,7 @@ def main() -> None:
     st.markdown(custom_css, unsafe_allow_html=True)
 
     st.title("Linked Data Explorer")
-    st.caption("Visualize and navigate your linked data in style!")
+    st.caption("Visualize and navigate your linked data.")
 
     with st.expander("How to Use This App"):
         st.write("1. Upload your JSON or JSON‑LD files in the **File Upload** section on the sidebar.")
@@ -975,7 +978,7 @@ def main() -> None:
         }
         filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
 
-    tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "About"])
+    tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "Timeline", "About"])
     
     with tabs[0]:
         st.header("Network Graph")
@@ -1152,8 +1155,79 @@ def main() -> None:
                 st.error(f"SPARQL Query failed: {e}")
         else:
             st.info("No query entered.")
-    
+
     with tabs[3]:
+        st.header("Timeline View")
+        import plotly.express as px
+        # Collect timeline events from node metadata
+        timeline_data = []
+        for node in st.session_state.graph_data.nodes:
+            # Birth date event
+            dob = node.metadata.get("dateOfBirth")
+            if isinstance(dob, list) and dob:
+                dob_value = dob[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+                if dob_value:
+                    timeline_data.append({
+                        "Label": node.label,
+                        "Event": "Birth",
+                        "Date": dob_value
+                    })
+            # Death date event
+            dod = node.metadata.get("dateOfDeath")
+            if isinstance(dod, list) and dod:
+                dod_value = dod[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+                if dod_value:
+                    timeline_data.append({
+                        "Label": node.label,
+                        "Event": "Death",
+                        "Date": dod_value
+                    })
+            # Education and employment events
+            for rel in ["educatedAt", "employedBy"]:
+                rel_events = node.metadata.get(rel)
+                if rel_events:
+                    if not isinstance(rel_events, list):
+                        rel_events = [rel_events]
+                    for event in rel_events:
+                        if isinstance(event, dict):
+                            # Start date for the event
+                            start = event.get("startDate")
+                            if start:
+                                start_value = start.get("time:inXSDDateTimeStamp", {}).get("@value")
+                                if start_value:
+                                    timeline_data.append({
+                                        "Label": node.label,
+                                        "Event": f"{rel} Start",
+                                        "Date": start_value
+                                    })
+                            # End date for the event
+                            end = event.get("endDate")
+                            if end:
+                                end_value = end.get("time:inXSDDateTimeStamp", {}).get("@value")
+                                if end_value:
+                                    timeline_data.append({
+                                        "Label": node.label,
+                                        "Event": f"{rel} End",
+                                        "Date": end_value
+                                    })
+        if timeline_data:
+            df_timeline = pd.DataFrame(timeline_data)
+            df_timeline["Date"] = pd.to_datetime(df_timeline["Date"])
+            # Use a scatter plot to display point events
+            fig = px.scatter(
+                df_timeline,
+                x="Date",
+                y="Label",
+                color="Event",
+                hover_data=["Event", "Date"],
+                title="Entity Timeline (Scatter Plot)"
+            )
+            fig.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig)
+        else:
+            st.info("No timeline data available.")
+
+    with tabs[4]:
         st.header("About Linked Data Explorer")
         st.markdown(
             f"""
@@ -1163,7 +1237,7 @@ def main() -> None:
             and edit the graph directly.
             
             **Features:**
-            - **Tabbed Interface:** Separate views for the graph, raw data, SPARQL queries, and about information.
+            - **Tabbed Interface:** Separate views for the graph, raw data, SPARQL queries, timeline, and about information.
             - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning and optional community detection.
             - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).

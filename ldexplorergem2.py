@@ -3,7 +3,7 @@
 Linked Data Network Visualization Application with Improved Aesthetics (No Nested Expanders)
 
 Author: ChatGPT
-Version: 1.3.3
+Version: 1.3.4
 Date: 2025-02-15
 """
 
@@ -101,27 +101,6 @@ DEFAULT_NODE_COLOR = "#D3D3D3"
 EX = Namespace("http://example.org/")  # Custom RDF namespace
 
 # -----------------------------------------------------------------------------
-# Data Classes
-# -----------------------------------------------------------------------------
-@dataclass
-class Edge:
-    source: str
-    target: str
-    relationship: str
-
-@dataclass
-class Node:
-    id: str
-    label: str
-    types: List[str]
-    metadata: Any  # metadata might not always be a dict
-    edges: List[Edge] = field(default_factory=list)
-
-@dataclass
-class GraphData:
-    nodes: List[Node]
-
-# -----------------------------------------------------------------------------
 # Utility Functions
 # -----------------------------------------------------------------------------
 def log_error(message: str) -> None:
@@ -181,6 +160,51 @@ def is_valid_iiif_manifest(url: str) -> bool:
         return False
     lower_url = url.lower()
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
+
+# -----------------------------------------------------------------------------
+# Create Legends Function (now defined in global scope)
+# -----------------------------------------------------------------------------
+def create_legends(relationship_colors: Dict[str, str], node_type_colors: Dict[str, str]) -> str:
+    relationship_items = "".join(
+        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>"
+        for rel, color in relationship_colors.items()
+    )
+    node_type_items = "".join(
+        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {ntype}</li>"
+        for ntype, color in node_type_colors.items()
+    )
+    return (
+        f"<h4>Legends</h4>"
+        f"<div style='display:flex;'>"
+        f"<ul style='list-style: none; padding: 0; margin-right: 20px;'>"
+        f"<strong>Relationships</strong>{relationship_items}"
+        f"</ul>"
+        f"<ul style='list-style: none; padding: 0;'>"
+        f"<strong>Node Types</strong>{node_type_items}"
+        f"</ul>"
+        f"</div>"
+    )
+
+# -----------------------------------------------------------------------------
+# Data Classes
+# -----------------------------------------------------------------------------
+@dataclass
+class Edge:
+    source: str
+    target: str
+    relationship: str
+
+@dataclass
+class Node:
+    id: str
+    label: str
+    types: List[str]
+    metadata: Any  # metadata might not always be a dict
+    edges: List[Edge] = field(default_factory=list)
+
+@dataclass
+class GraphData:
+    nodes: List[Node]
 
 # -----------------------------------------------------------------------------
 # Data Parsing and Caching
@@ -437,7 +461,7 @@ def build_graph(
     }
     net.options = default_options
 
-    # Append custom JS for context and drag-end events
+    # Custom JS for context and drag-end events
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -460,9 +484,8 @@ def build_graph(
       }, 1000);
     </script>
     """
-    net.html = net.generate_html() + custom_js
 
-    # Always apply manual positions if provided
+    # Apply manual node positions if provided
     if node_positions:
         for node in net.nodes:
             pos = node_positions.get(node.get("id"))
@@ -472,7 +495,7 @@ def build_graph(
                 node['fixed'] = True
                 node['physics'] = False
 
-    # Community Detection: reassign node colors based on detected communities
+    # Community Detection: update node colors based on detected communities
     if community_detection:
         G = nx.Graph()
         for node in net.nodes:
@@ -481,20 +504,25 @@ def build_graph(
             G.add_edge(edge["from"], edge["to"])
         try:
             communities = list(nx.algorithms.community.greedy_modularity_communities(G))
-            community_colors = [
-                "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-                "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
-            ]
-            community_map: Dict[str, str] = {}
-            for i, comm in enumerate(communities):
-                for n in comm:
-                    community_map[n] = community_colors[i % len(community_colors)]
-            for node in net.nodes:
-                if node["id"] in community_map:
-                    node["color"] = community_map[node["id"]]
+            if communities:
+                community_colors = [
+                    "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+                    "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+                ]
+                community_map: Dict[str, str] = {}
+                for i, comm in enumerate(communities):
+                    for n in comm:
+                        community_map[n] = community_colors[i % len(community_colors)]
+                for node in net.nodes:
+                    if node["id"] in community_map:
+                        node["color"] = community_map[node["id"]]
+            else:
+                st.info("No communities detected.")
         except Exception as e:
             st.error(f"Community detection failed: {e}")
 
+    # Now generate HTML after all modifications
+    net.html = net.generate_html() + custom_js
     return net
 
 # -----------------------------------------------------------------------------
@@ -783,9 +811,7 @@ def main() -> None:
                 y_pos = st.number_input("Y Position", value=current_pos["y"], step=10.0)
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
-                    st.success(
-                        f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})"
-                    )
+                    st.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
 
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
@@ -861,7 +887,6 @@ def main() -> None:
                     filtered_nodes=filtered_nodes,
                     community_detection=community_detection
                 )
-            # Manual positions have already been applied in build_graph.
             if community_detection:
                 st.info("Community detection applied to node colors.")
             if len(net.nodes) > 50 and st.session_state.show_labels:
@@ -877,7 +902,6 @@ def main() -> None:
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
             
             if st.session_state.selected_node:
-                from pprint import pformat
                 st.markdown("#### Node Metadata")
                 node_obj = next((node for node in st.session_state.graph_data.nodes if node.id == st.session_state.selected_node), None)
                 if node_obj:
@@ -1038,7 +1062,7 @@ def main() -> None:
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Version:** 1.3.3  
+            **Version:** 1.3.4  
             **Author:** ChatGPT  
             **Contact:** example@example.com
             

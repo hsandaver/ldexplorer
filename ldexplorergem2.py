@@ -1,23 +1,9 @@
 #!/usr/bin/env python
 """
-Enhanced Linked Data Network Visualization Application with Custom Default Physics Options
+Linked Data Network Visualization Application with Improved Aesthetics (No Nested Expanders)
 
-Default physics options (disabled by default):
-{
-  "physics": {
-    "enabled": false,
-    "hierarchicalRepulsion": {
-      "centralGravity": 0,
-      "springLength": 230,
-      "nodeDistance": 210,
-      "avoidOverlap": 1
-    },
-    "minVelocity": 0.75,
-    "solver": "hierarchicalRepulsion"
-  }
-}
-
-Author: ChatGPT (Enhanced)
+Author: ChatGPT
+Version: 1.3.1
 Date: 2025-02-15
 """
 
@@ -31,17 +17,23 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
 import streamlit as st
+
+# Set page config as the very first Streamlit command!
+st.set_page_config(page_title="Linked Data Explorer", page_icon="🕸️", layout="wide")
+
+# Try to import streamlit-ace for SPARQL syntax highlighting
+try:
+    from streamlit_ace import st_ace
+    ace_installed = True
+except ImportError:
+    ace_installed = False
+
 import streamlit.components.v1 as components
 from pyvis.network import Network
 from rdflib import Graph as RDFGraph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS
 import networkx as nx
 import pandas as pd
-
-# -----------------------------------------------------------------------------
-# Set page configuration (must be the very first Streamlit command)
-# -----------------------------------------------------------------------------
-st.set_page_config(page_title="Linked Data Explorer", page_icon="🕸️", layout="wide")
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
@@ -148,7 +140,10 @@ def remove_fragment(uri: str) -> str:
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     """Normalize relationship value based on its type."""
     if isinstance(value, dict):
-        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner"}:
+        if rel in {
+            "spouse", "studentOf", "employedBy", "educatedAt", 
+            "contributor", "draftsman", "creator", "owner"
+        }:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
         elif rel == 'succeededBy':
             return remove_fragment(value.get('resultedIn', ''))
@@ -225,7 +220,13 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
                     normalized_id = normalize_relationship_value(rel, value)
                     if normalized_id:
                         edges.append(Edge(source=subject_id, target=normalized_id, relationship=rel))
-            new_node = Node(id=subject_id, label=label, types=entity_types, metadata=normalized, edges=edges)
+            new_node = Node(
+                id=subject_id, 
+                label=label, 
+                types=entity_types, 
+                metadata=normalized, 
+                edges=edges
+            )
             nodes.append(new_node)
             id_to_label[subject_id] = label
         except Exception as e:
@@ -275,11 +276,18 @@ def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
 # -----------------------------------------------------------------------------
 # Graph Building Helpers Module
 # -----------------------------------------------------------------------------
-def add_node(net: Network, node_id: str, label: str, entity_types: List[str],
-             color: str, metadata: Dict[str, Any],
-             search_node: Optional[str] = None, show_labels: bool = True) -> None:
+def add_node(
+    net: Network,
+    node_id: str,
+    label: str,
+    entity_types: List[str],
+    color: str,
+    metadata: Dict[str, Any],
+    search_node: Optional[str] = None,
+    show_labels: bool = True
+) -> None:
     """
-    Add a node to the pyvis network with dynamic styling based on density.
+    Add a node to the pyvis network with dynamic styling.
     """
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
     description = ""
@@ -291,7 +299,6 @@ def add_node(net: Network, node_id: str, label: str, entity_types: List[str],
     if description:
         node_title += f"\nDescription: {description}"
     
-    # Dynamic sizing: highlight search node or adjust size based on density
     size = 20 if (search_node is not None and node_id == search_node) else 15
 
     net.add_node(
@@ -309,8 +316,14 @@ def add_node(net: Network, node_id: str, label: str, entity_types: List[str],
     )
     logging.debug(f"Added node: {label} ({node_id}) with color {color}")
 
-def add_edge(net: Network, src: str, dst: str, relationship: str,
-             id_to_label: Dict[str, str], search_node: Optional[str] = None) -> None:
+def add_edge(
+    net: Network,
+    src: str,
+    dst: str,
+    relationship: str,
+    id_to_label: Dict[str, str],
+    search_node: Optional[str] = None
+) -> None:
     """
     Add an edge to the pyvis network with styling based on relationship type.
     """
@@ -338,19 +351,18 @@ def build_graph(
     node_positions: Optional[Dict[str, Dict[str, float]]] = None,
     show_labels: bool = True,
     filtered_nodes: Optional[Set[str]] = None,
-    dark_mode: bool = False,
     community_detection: bool = False
 ) -> Network:
     """
-    Build the pyvis network graph from GraphData with improved interactivity and visuals.
+    Build the pyvis network graph from GraphData.
     """
     net = Network(
         height="750px",
         width="100%",
         directed=True,
         notebook=False,
-        bgcolor="#f0f2f6" if not dark_mode else "#2c2f33",
-        font_color="#343a40" if not dark_mode else "#ffffff"
+        bgcolor="#f0f2f6",
+        font_color="#343a40"
     )
     net.force_atlas_2based(
         gravity=st.session_state.physics_params.get("gravity", -50),
@@ -361,6 +373,7 @@ def build_graph(
 
     added_nodes: Set[str] = set()
     edge_set: Set[Tuple[str, str, str]] = set()
+
     # Add nodes
     for node in graph_data.nodes:
         if filtered_nodes is not None and node.id not in filtered_nodes:
@@ -368,9 +381,18 @@ def build_graph(
             continue
         color = next((NODE_TYPE_COLORS.get(t, DEFAULT_NODE_COLOR) for t in node.types), DEFAULT_NODE_COLOR)
         if node.id not in added_nodes:
-            add_node(net, node.id, id_to_label.get(node.id, node.id), node.types,
-                     color, node.metadata, search_node=search_node, show_labels=show_labels)
+            add_node(
+                net,
+                node.id,
+                id_to_label.get(node.id, node.id),
+                node.types,
+                color,
+                node.metadata,
+                search_node=search_node,
+                show_labels=show_labels
+            )
             added_nodes.add(node.id)
+
     # Add edges
     for node in graph_data.nodes:
         for edge in node.edges:
@@ -381,14 +403,20 @@ def build_graph(
                 continue
             if edge.target not in added_nodes:
                 target_label = id_to_label.get(edge.target, edge.target)
-                add_node(net, edge.target, target_label, ["Unknown"], DEFAULT_NODE_COLOR, {},
-                         show_labels=show_labels)
+                add_node(
+                    net,
+                    edge.target,
+                    target_label,
+                    ["Unknown"],
+                    DEFAULT_NODE_COLOR,
+                    {},
+                    show_labels=show_labels
+                )
                 added_nodes.add(edge.target)
             if (edge.source, edge.target, edge.relationship) not in edge_set:
                 add_edge(net, edge.source, edge.target, edge.relationship, id_to_label, search_node=search_node)
                 edge_set.add((edge.source, edge.target, edge.relationship))
 
-    # Adjust fonts dynamically based on node count
     node_count = len(net.nodes)
     node_font_size = 12 if node_count <= 50 else 10
     edge_font_size = 10 if node_count <= 50 else 8
@@ -398,7 +426,7 @@ def build_graph(
             "font": {
                 "size": node_font_size,
                 "face": "Arial",
-                "color": "#343a40" if not dark_mode else "#ffffff",
+                "color": "#343a40",
                 "strokeWidth": 0
             }
         },
@@ -407,7 +435,7 @@ def build_graph(
                 "size": edge_font_size,
                 "face": "Arial",
                 "align": "middle",
-                "color": "#343a40" if not dark_mode else "#ffffff"
+                "color": "#343a40"
             },
             "smooth": {
                 "type": "continuous"
@@ -435,7 +463,7 @@ def build_graph(
     }
     net.options = default_options
 
-    # Inject custom JS for right-click context menu and drag events.
+    # Right-click context and drag-end custom JS
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -549,45 +577,72 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 def main() -> None:
     """Main entry point for the Streamlit app."""
-    # Allow user to select a theme from sidebar
-    theme_choice = st.sidebar.selectbox("Select Theme", options=["Light", "Dark", "Blue"], index=0)
-    dark_mode = theme_choice in ["Dark", "Blue"]
 
-    # Custom CSS with enhanced styling
-    custom_css = f"""
+    # Minimal custom CSS for a cleaner, lighter look
+    custom_css = """
     <style>
-        .stApp {{
+        .stApp {
             max-width: 1600px;
             padding: 1rem;
-            background-color: {"#2c2f33" if dark_mode else "#f0f2f6"};
-            color: {"#ffffff" if dark_mode else "#343a40"};
-        }}
-        h1, h3, h4 {{
-            color: {"#ddd" if dark_mode else "#333"};
-        }}
-        .stButton > button, .stDownloadButton > button {{
-            background-color: #5cb85c;
+            background-color: #fafafa;
+            color: #343a40;
+        }
+        section[data-testid="stSidebar"] > div {
+            background-color: #f8f9fa;
+            padding: 1rem;
+        }
+        h1, h2, h3, h4, h5 {
+            color: #333;
+        }
+        .stButton > button, .stDownloadButton > button {
+            background-color: #007bff;
             color: white;
             border: none;
             padding: 0.6rem 1.2rem;
             border-radius: 0.3rem;
             font-size: 1rem;
             transition: background-color 0.3s ease;
-        }}
-        .stButton > button:hover, .stDownloadButton > button:hover {{
-            background-color: #4cae4c;
-        }}
-        input, .css-1d391kg {{
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            background-color: #0056b3;
+        }
+        .css-1d391kg, .stTextInput, .stSelectbox, .stTextArea {
             border-radius: 4px;
-        }}
-        @media (max-width: 768px) {{
-            .stApp {{
-                padding: 0.5rem;
-            }}
-        }}
+        }
+        .stTextInput > label, .stSelectbox > label, .stTextArea > label {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+        .stExpander > label {
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+        .stTabs [role="tab"] {
+            font-weight: 600;
+        }
+        /* This adjusts the color of the top bar (where the app name is). */
+        header[data-testid="stHeader"] {
+            background: #f8f9fa;
+        }
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
+
+    # === Add a main title and a short caption
+    st.title("Linked Data Explorer")
+    st.caption("Visualize and navigate your linked data in style!")
+
+    # === Optional help/info expander at the top
+    with st.expander("How to Use This App"):
+        st.write("1. Upload your JSON or JSON-LD files in the **File Upload** section on the sidebar.")
+        st.write("2. Adjust visualization settings like physics, or filter by entity types.")
+        st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes.")
+        st.write("4. Explore the graph in the **Graph View** tab below!")
+        st.write("5. You can also position nodes manually and even reset positions if things get messy.")
+
+    # If streamlit-ace is not installed, let the user know in the sidebar
+    if not ace_installed:
+        st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
 
     # Initialize session state variables if not already set
     if "node_positions" not in st.session_state:
@@ -646,36 +701,55 @@ def main() -> None:
     with st.sidebar.expander("Visualization Settings"):
         community_detection = st.checkbox("Enable Community Detection", value=False, key="community_detection")
         
-        st.subheader("Physics Settings")
-        st.session_state.physics_params["gravity"] = st.number_input(
-            "Gravity",
-            value=float(st.session_state.physics_params["gravity"]),
-            step=1.0,
-            key="gravity_input"
+        # Physics Presets
+        physics_presets = {
+            "Default (Balanced)": {"gravity": -50, "centralGravity": 0.01, "springLength": 150, "springStrength": 0.08},
+            "High Gravity (Clustering)": {"gravity": -100, "centralGravity": 0.05, "springLength": 100, "springStrength": 0.15},
+            "No Physics (Manual Layout)": {"gravity": 0, "centralGravity": 0, "springLength": 150, "springStrength": 0},
+            "Custom": st.session_state.physics_params
+        }
+        selected_preset = st.selectbox(
+            "Physics Presets", 
+            options=list(physics_presets.keys()), 
+            index=0, 
+            key="physics_preset"
         )
-        st.session_state.physics_params["centralGravity"] = st.number_input(
-            "Central Gravity",
-            value=st.session_state.physics_params["centralGravity"],
-            step=0.01,
-            key="centralGravity_input"
-        )
-        st.session_state.physics_params["springLength"] = st.number_input(
-            "Spring Length",
-            value=float(st.session_state.physics_params["springLength"]),
-            step=1.0,
-            key="springLength_input"
-        )
-        st.session_state.physics_params["springStrength"] = st.number_input(
-            "Spring Strength",
-            value=st.session_state.physics_params["springStrength"],
-            step=0.01,
-            key="springStrength_input"
-        )
+        if selected_preset != "Custom":
+            st.session_state.physics_params = physics_presets[selected_preset]
+            st.info("Physics parameters set to preset: " + selected_preset)
+        else:
+            # Just use a subheader (not an expander) to avoid nesting errors
+            st.subheader("Advanced Physics Settings")
+            st.session_state.physics_params["gravity"] = st.number_input(
+                "Gravity",
+                value=float(st.session_state.physics_params.get("gravity", -50)),
+                step=1.0,
+                key="gravity_input"
+            )
+            st.session_state.physics_params["centralGravity"] = st.number_input(
+                "Central Gravity",
+                value=st.session_state.physics_params.get("centralGravity", 0.01),
+                step=0.01,
+                key="centralGravity_input"
+            )
+            st.session_state.physics_params["springLength"] = st.number_input(
+                "Spring Length",
+                value=float(st.session_state.physics_params.get("springLength", 150)),
+                step=1.0,
+                key="springLength_input"
+            )
+            st.session_state.physics_params["springStrength"] = st.number_input(
+                "Spring Strength",
+                value=st.session_state.physics_params.get("springStrength", 0.08),
+                step=0.01,
+                key="springStrength_input"
+            )
     
     with st.sidebar.expander("Graph Editing"):
-        edit_option = st.radio("Select Action", ("Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"))
+        ge_tabs = st.tabs(["Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"])
         nodes_list: List[Node] = st.session_state.graph_data.nodes
-        if edit_option == "Add Node":
+
+        with ge_tabs[0]:
             with st.form("add_node_form"):
                 new_node_label = st.text_input("Node Label")
                 new_node_type = st.selectbox("Node Type", list(NODE_TYPE_COLORS.keys()))
@@ -687,7 +761,11 @@ def main() -> None:
                             id=new_node_id,
                             label=new_node_label,
                             types=[new_node_type],
-                            metadata={"id": new_node_id, "prefLabel": {"en": new_node_label}, "type": [new_node_type]},
+                            metadata={
+                                "id": new_node_id, 
+                                "prefLabel": {"en": new_node_label}, 
+                                "type": [new_node_type]
+                            },
                             edges=[]
                         )
                         st.session_state.graph_data.nodes.append(new_node)
@@ -695,19 +773,23 @@ def main() -> None:
                         st.toast(f"Node '{new_node_label}' added!", icon="✅")
                     else:
                         st.error("Please provide a Node Label.")
-        elif edit_option == "Delete Node":
+
+        with ge_tabs[1]:
             node_ids = [node.id for node in nodes_list]
             if node_ids:
                 selected_to_delete = st.selectbox("Select Node to Delete", node_ids)
                 if st.button("Delete Node"):
-                    st.session_state.graph_data.nodes = [node for node in nodes_list if node.id != selected_to_delete]
+                    st.session_state.graph_data.nodes = [
+                        node for node in nodes_list if node.id != selected_to_delete
+                    ]
                     for node in st.session_state.graph_data.nodes:
                         node.edges = [edge for edge in node.edges if edge.target != selected_to_delete]
                     st.session_state.id_to_label.pop(selected_to_delete, None)
                     st.toast(f"Node '{selected_to_delete}' deleted.", icon="✅")
             else:
                 st.info("No nodes available to delete.")
-        elif edit_option == "Modify Node":
+
+        with ge_tabs[2]:
             node_ids = [node.id for node in nodes_list]
             if node_ids:
                 selected_to_modify = st.selectbox("Select Node to Modify", node_ids)
@@ -715,9 +797,12 @@ def main() -> None:
                 if node_obj:
                     with st.form("modify_node_form"):
                         new_label = st.text_input("New Label", value=node_obj.label)
-                        new_type = st.selectbox("New Type", list(NODE_TYPE_COLORS.keys()),
-                                                index=list(NODE_TYPE_COLORS.keys()).index(node_obj.types[0])
-                                                if node_obj.types[0] in NODE_TYPE_COLORS else 0)
+                        new_type = st.selectbox(
+                            "New Type", 
+                            list(NODE_TYPE_COLORS.keys()),
+                            index=list(NODE_TYPE_COLORS.keys()).index(node_obj.types[0])
+                            if node_obj.types and node_obj.types[0] in NODE_TYPE_COLORS else 0
+                        )
                         submitted = st.form_submit_button("Modify Node")
                         if submitted:
                             node_obj.label = new_label
@@ -727,7 +812,8 @@ def main() -> None:
                             st.toast(f"Node '{selected_to_modify}' modified.", icon="✅")
             else:
                 st.info("No nodes available to modify.")
-        elif edit_option == "Add Edge":
+
+        with ge_tabs[3]:
             if nodes_list:
                 with st.form("add_edge_form"):
                     source_node = st.selectbox("Source Node", [node.id for node in nodes_list])
@@ -737,11 +823,16 @@ def main() -> None:
                     if submitted:
                         for node in nodes_list:
                             if node.id == source_node:
-                                node.edges.append(Edge(source=source_node, target=target_node, relationship=relationship))
+                                node.edges.append(Edge(
+                                    source=source_node, 
+                                    target=target_node, 
+                                    relationship=relationship
+                                ))
                         st.toast(f"Edge '{relationship}' from '{source_node}' to '{target_node}' added.", icon="✅")
             else:
                 st.info("No nodes available to add an edge.")
-        elif edit_option == "Delete Edge":
+
+        with ge_tabs[4]:
             all_edges = []
             for node in nodes_list:
                 for edge in node.edges:
@@ -751,7 +842,10 @@ def main() -> None:
                 if st.button("Delete Edge"):
                     for node in nodes_list:
                         if node.id == edge_to_delete[0]:
-                            node.edges = [edge for edge in node.edges if (edge.source, edge.target, edge.relationship) != edge_to_delete]
+                            node.edges = [
+                                e for e in node.edges 
+                                if (e.source, e.target, e.relationship) != edge_to_delete
+                            ]
                     st.toast("Edge deleted.", icon="✅")
             else:
                 st.info("No edges available to delete.")
@@ -773,8 +867,16 @@ def main() -> None:
                 y_pos = st.number_input("Y Position", value=current_pos["y"], step=10.0)
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
-                    st.toast(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})", icon="✅")
-    
+                    st.toast(
+                        f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})",
+                        icon="✅"
+                    )
+
+        # --- Reset positions button ---
+        if st.button("Reset Node Positions"):
+            st.session_state.node_positions = {}
+            st.experimental_rerun()
+
     # ---------------- Filter by Entity Types and SPARQL Query ----------------
     if st.session_state.graph_data.nodes:
         all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
@@ -793,12 +895,21 @@ def main() -> None:
         key="search_term_control",
         value=st.session_state.search_term
     )
-    sparql_query_input = st.sidebar.text_area(
-        "SPARQL Query",
-        help="Enter a SPARQL SELECT query to filter nodes.",
-        key="sparql_query_control",
-        value=st.session_state.sparql_query
-    )
+    if ace_installed:
+        sparql_query_input = st_ace(
+            value=st.session_state.sparql_query,
+            language='sparql',
+            theme="github",
+            height=150,
+            key="sparql_query_control"
+        )
+    else:
+        sparql_query_input = st.sidebar.text_area(
+            "SPARQL Query",
+            help="Enter a SPARQL SELECT query to filter nodes.",
+            key="sparql_query_control",
+            value=st.session_state.sparql_query
+        )
     st.session_state.sparql_query = sparql_query_input
 
     if sparql_query_input.strip():
@@ -814,17 +925,20 @@ def main() -> None:
         filtered_nodes = None
 
     if st.session_state.filtered_types:
-        filtered_by_type = {node.id for node in st.session_state.graph_data.nodes
-                            if any(t in st.session_state.filtered_types for t in node.types)}
+        filtered_by_type = {
+            node.id 
+            for node in st.session_state.graph_data.nodes
+            if any(t in st.session_state.filtered_types for t in node.types)
+        }
         filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
-    
-    st.sidebar.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
-    
+
+    # (REMOVED the old legend call from the sidebar)
+
     # -------------------- Main Content: Tabbed Interface --------------------
     tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "About"])
     
     with tabs[0]:
-        st.header("🕸️ Network Graph")
+        st.header("Network Graph")
         if st.session_state.graph_data.nodes:
             with st.spinner("Generating Network Graph..."):
                 net = build_graph(
@@ -832,14 +946,16 @@ def main() -> None:
                     id_to_label=st.session_state.id_to_label,
                     selected_relationships=st.session_state.selected_relationships,
                     search_node=next(
-                        (node.id for node in st.session_state.graph_data.nodes 
-                         if node.label.lower() == st.session_state.search_term.lower()),
+                        (
+                            node.id 
+                            for node in st.session_state.graph_data.nodes 
+                            if node.label.lower() == st.session_state.search_term.lower()
+                        ),
                         None
                     ),
                     node_positions=st.session_state.node_positions,
                     show_labels=st.session_state.show_labels,
                     filtered_nodes=filtered_nodes,
-                    dark_mode=dark_mode,
                     community_detection=community_detection
                 )
             # Apply manual positions if available
@@ -851,6 +967,7 @@ def main() -> None:
                         node['y'] = pos['y']
                         node['fixed'] = True
             else:
+                # Basic spring layout
                 G = nx.Graph()
                 for node in net.nodes:
                     G.add_node(node["id"])
@@ -870,6 +987,7 @@ def main() -> None:
                     node['fixed'] = True
                     node['physics'] = False
             if community_detection:
+                # Basic community detection
                 G = nx.Graph()
                 for node in net.nodes:
                     G.add_node(node["id"])
@@ -908,13 +1026,24 @@ def main() -> None:
                 components.html(graph_html, height=750, scrolling=True)
             except Exception as e:
                 st.error(f"Graph generation failed: {e}")
+
+            # === Display the legend right after the graph ===
+            st.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
+
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
+            
+            # Node metadata
             if st.session_state.selected_node:
-                display_node_metadata(st.session_state.selected_node, st.session_state.graph_data, st.session_state.id_to_label)
+                display_node_metadata(
+                    st.session_state.selected_node, 
+                    st.session_state.graph_data, 
+                    st.session_state.id_to_label
+                )
             else:
                 st.markdown("#### Node Metadata")
                 st.info("Select a node from the sidebar to view its metadata.")
-            # Map view for nodes with geographic coordinates
+            
+            # Map View
             place_locations = []
             for node in st.session_state.graph_data.nodes:
                 if isinstance(node.metadata, dict) and "geographicCoordinates" in node.metadata:
@@ -944,7 +1073,8 @@ def main() -> None:
                 st.map(df_places)
             else:
                 st.info("No entities with valid coordinates found for map view.")
-            # IIIF Viewer integration
+            
+            # IIIF Viewer
             st.subheader("IIIF Viewer")
             iiif_nodes = [
                 node for node in st.session_state.graph_data.nodes
@@ -993,6 +1123,7 @@ def main() -> None:
                         st.info("No valid IIIF manifest found for the selected entity.")
             else:
                 st.info("No entity with a manifest found.")
+            
             # Export Options
             with st.expander("Export Options", expanded=True):
                 if "graph_html" in st.session_state:
@@ -1017,8 +1148,14 @@ def main() -> None:
         st.header("Data View")
         st.subheader("Graph Nodes")
         if st.session_state.graph_data.nodes:
-            data = [{"ID": node.id, "Label": node.label, "Types": ", ".join(node.types)} for node in st.session_state.graph_data.nodes]
-            st.dataframe(pd.DataFrame(data))
+            data = [
+                {"ID": node.id, "Label": node.label, "Types": ", ".join(node.types)}
+                for node in st.session_state.graph_data.nodes
+            ]
+            df_nodes = pd.DataFrame(data)
+            st.dataframe(df_nodes)
+            csv_data = df_nodes.to_csv(index=False).encode('utf-8')
+            st.download_button("Download Nodes as CSV", data=csv_data, file_name="nodes.csv", mime="text/csv")
         else:
             st.info("No data available. Please upload JSON files.")
     
@@ -1038,7 +1175,7 @@ def main() -> None:
     with tabs[3]:
         st.header("About Linked Data Explorer")
         st.markdown(
-            """
+            f"""
             ### Explore Relationships Between Entities
             Upload multiple JSON files representing entities and generate an interactive network.
             Use the sidebar to filter relationships, search for nodes, set manual positions,
@@ -1046,21 +1183,19 @@ def main() -> None:
             
             **Features:**
             - **Tabbed Interface:** Separate views for the graph, raw data, SPARQL queries, and about information.
-            - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning and community detection.
-            - **Theme Options:** Choose between Light, Dark, and Blue themes.
-            - **SPARQL Query Support:** Run queries on your RDF-converted graph and preview results.
-            - **IIIF Viewer:** For entities with a manifest, view the associated manifest directly in the app.
-            - **Export Options:** Download the graph as HTML or JSON‑LD.
+            - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning and optional community detection.
+            - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
+            - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).
+            - **IIIF Viewer:** View IIIF manifests for applicable entities.
+            - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Usage:**
-            - Upload JSON files via the sidebar.
-            - Configure graph settings and physics parameters.
-            - Edit the graph by adding, deleting, or modifying nodes and edges.
-            - Explore your data using the various tabs.
+            **Version:** 1.3.1  
+            **Author:** ChatGPT  
+            **Contact:** example@example.com
             
             Enjoy exploring your linked data!
             """
         )
-    
+
 if __name__ == "__main__":
     main()

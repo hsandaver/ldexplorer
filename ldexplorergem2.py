@@ -101,7 +101,7 @@ NODE_TYPE_SHAPES: Dict[str, str] = {
     "StillImage": "dot",
     "Event": "star",
     "Work": "ellipse",
-    "AdministrativeArea": "diamond"
+    "AdministrativeArea": "diamond",
     "Unknown": "dot"
 }
 

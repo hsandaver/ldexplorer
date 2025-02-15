@@ -1212,7 +1212,9 @@ def main() -> None:
                                     })
         if timeline_data:
             df_timeline = pd.DataFrame(timeline_data)
-            df_timeline["Date"] = pd.to_datetime(df_timeline["Date"])
+            # Use dateutil to parse dates for scientific rigour, especially for dates before 1678
+            from dateutil.parser import parse
+            df_timeline["Date"] = df_timeline["Date"].apply(lambda x: parse(x))
             # Use a scatter plot to display point events
             fig = px.scatter(
                 df_timeline,

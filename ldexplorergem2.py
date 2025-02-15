@@ -101,6 +101,71 @@ DEFAULT_NODE_COLOR = "#D3D3D3"
 EX = Namespace("http://example.org/")  # Custom RDF namespace
 
 # -----------------------------------------------------------------------------
+# Custom Community Detection Function with Disassembly Strategy
+# -----------------------------------------------------------------------------
+def custom_community_detection(G: nx.Graph, max_iter: int = 5) -> List[Set[str]]:
+    """
+    Runs the greedy modularity community detection iteratively.
+    In each iteration, it identifies 'weak' nodes based on two criteria:
+      - Internal degree <= half of total degree.
+      - (When community is large enough) Node participates in 0 triangles.
+    Weak nodes are removed and then re‑added as singleton communities.
+    The process is repeated until modularity no longer improves or max_iter is reached.
+    """
+    communities = list(nx.algorithms.community.greedy_modularity_communities(G))
+    best_modularity = nx.algorithms.community.modularity(G, communities)
+    for i in range(max_iter):
+        weak_nodes = set()
+        new_communities = []
+        # Process each community
+        for comm in communities:
+            comm = set(comm)
+            if len(comm) >= 3:
+                # Compute triangles in the induced subgraph for the community
+                triangles = nx.triangles(G.subgraph(comm))
+            else:
+                triangles = {v: 0 for v in comm}
+            strong_nodes = set()
+            for v in comm:
+                total_deg = G.degree(v)
+                # Count neighbors within the community
+                internal_deg = sum(1 for nb in G.neighbors(v) if nb in comm)
+                # If a node has no neighbors, we consider it non-weak.
+                if total_deg == 0:
+                    strong_nodes.add(v)
+                    continue
+                # Weak if internal connectivity is low
+                if internal_deg <= total_deg / 2:
+                    weak_nodes.add(v)
+                # Also weak if it does not form any triangle (in communities with 3+ nodes)
+                elif len(comm) >= 3 and triangles.get(v, 0) == 0:
+                    weak_nodes.add(v)
+                else:
+                    strong_nodes.add(v)
+            if strong_nodes:
+                new_communities.append(strong_nodes)
+        # If no weak nodes were found, stop iterating.
+        if not weak_nodes:
+            break
+        # Create a modified graph by removing weak nodes
+        G_mod = G.copy()
+        G_mod.remove_nodes_from(weak_nodes)
+        if len(G_mod.nodes()) > 0:
+            mod_communities = list(nx.algorithms.community.greedy_modularity_communities(G_mod))
+        else:
+            mod_communities = []
+        # Add each weak node as its own community
+        for w in weak_nodes:
+            mod_communities.append({w})
+        new_modularity = nx.algorithms.community.modularity(G, mod_communities)
+        if new_modularity > best_modularity:
+            best_modularity = new_modularity
+            communities = mod_communities
+        else:
+            break
+    return communities
+
+# -----------------------------------------------------------------------------
 # Utility Functions
 # -----------------------------------------------------------------------------
 def log_error(message: str) -> None:
@@ -503,7 +568,7 @@ def build_graph(
         for edge in net.edges:
             G.add_edge(edge["from"], edge["to"])
         try:
-            communities = list(nx.algorithms.community.greedy_modularity_communities(G))
+            communities = custom_community_detection(G, max_iter=20)
             if communities:
                 community_colors = [
                     "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",

@@ -768,8 +768,8 @@ def build_graph(
             partition = detect_communities_louvain(G_comm)
             logging.info(f"Community partition: {partition}")
             community_colors = [
-                "#f4c2c2", "#c2f4c2", "#f4f4c2", "#c2c2f4", "#f4c2f4",
-                "#c2f4f4", "#f4e1c2", "#c2e1f4", "#e1f4c2", "#f4c2e1"
+                "#77AADD", "#EE8866", "#EEDD88", "#FFAABB", "#99DDFF", 
+                "#44BB99", "#BBCC33", "#AAAA00", "#DDDDDD" 
             ]
             # Update node colors based on community assignment.
             for node in net.nodes:

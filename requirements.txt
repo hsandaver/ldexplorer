@@ -4,3 +4,4 @@ rdflib>=6.0.0
 networkx>=2.6.0
 streamlit-ace
 plotly
+matplotlib

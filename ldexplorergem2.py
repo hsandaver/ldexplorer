@@ -855,7 +855,7 @@ def main() -> None:
         st.write("2. Adjust visualization settings like physics, filtering, and (optionally) enable centrality measures.")
         st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes or load data from a remote SPARQL endpoint.")
         st.write("4. Explore the graph in the **Graph View** tab below!")
-        st.write("5. Manually set node positions using the sidebar.")
+        st.write("5. Manually set node positions using the sidebar. You can also download/upload the positions config.")
 
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
@@ -1137,6 +1137,22 @@ def main() -> None:
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[sel_node] = {"x": x_val, "y": y_val}
                     st.success(f"Position for '{unique_nodes[sel_node]}' set to (X: {x_val}, Y: {y_val})")
+        # Download button to save the positions config as JSON
+        st.download_button(
+            "Download Node Positions Config",
+            data=json.dumps(st.session_state.node_positions, indent=2),
+            file_name="node_positions.json",
+            mime="application/json"
+        )
+        # Uploader to load a saved positions config
+        uploaded_config = st.file_uploader("Load Node Positions Config", type=["json"], key="node_positions_file")
+        if uploaded_config is not None:
+            try:
+                loaded_config = json.load(uploaded_config)
+                st.session_state.node_positions = loaded_config
+                st.success("Node positions config loaded!")
+            except Exception as e:
+                st.error("Failed to load config: " + str(e))
 
     with st.sidebar.expander("Advanced Filtering"):
         st.subheader("Property-based Filtering")

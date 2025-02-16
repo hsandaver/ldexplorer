@@ -1087,8 +1087,20 @@ def main() -> None:
     # Sidebar: Graph Pathfinding
     with st.sidebar.expander("Graph Pathfinding"):
         if st.session_state.graph_data.nodes:
-            source_pf = st.selectbox("Source Node", [n.id for n in st.session_state.graph_data.nodes], key="pf_source")
-            target_pf = st.selectbox("Target Node", [n.id for n in st.session_state.graph_data.nodes], key="pf_target")
+            # Build a mapping of node IDs to labels for user-friendly display
+            node_options = {n.id: st.session_state.id_to_label.get(n.id, n.id) for n in st.session_state.graph_data.nodes}
+            source_pf = st.selectbox(
+                "Source Node", 
+                options=list(node_options.keys()), 
+                format_func=lambda x: node_options[x], 
+                key="pf_source"
+            )
+            target_pf = st.selectbox(
+                "Target Node", 
+                options=list(node_options.keys()), 
+                format_func=lambda x: node_options[x], 
+                key="pf_target"
+            )
             if st.button("Find Shortest Path"):
                 try:
                     G_pf = nx.DiGraph()

@@ -360,6 +360,79 @@ def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> Li
     return relationships
 
 # ------------------------------
+# Animated Timeline Function
+# ------------------------------
+def generate_animated_timeline(graph_data: GraphData) -> Optional[px.scatter]:
+    """
+    Extracts timeline events from graph_data and creates an animated timeline using Plotly Express.
+    Each frame represents a year.
+    """
+    timeline_data = []
+    for n in graph_data.nodes:
+        # Birth event
+        dob = n.metadata.get("dateOfBirth")
+        if isinstance(dob, list) and dob:
+            dval = dob[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+            if dval:
+                timeline_data.append({"Label": n.label, "Event": "Birth", "Date": dval})
+        # Death event
+        dod = n.metadata.get("dateOfDeath")
+        if isinstance(dod, list) and dod:
+            dval = dod[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+            if dval:
+                timeline_data.append({"Label": n.label, "Event": "Death", "Date": dval})
+        # Other events (e.g., educatedAt, employedBy)
+        for rel in ["educatedAt", "employedBy"]:
+            events = n.metadata.get(rel)
+            if events:
+                if not isinstance(events, list):
+                    events = [events]
+                for ev in events:
+                    if isinstance(ev, dict):
+                        start = ev.get("startDate")
+                        if start:
+                            val_start = start.get("time:inXSDDateTimeStamp", {}).get("@value")
+                            if val_start:
+                                timeline_data.append({
+                                    "Label": n.label,
+                                    "Event": f"{rel} Start",
+                                    "Date": val_start
+                                })
+                        end = ev.get("endDate")
+                        if end:
+                            val_end = end.get("time:inXSDDateTimeStamp", {}).get("@value")
+                            if val_end:
+                                timeline_data.append({
+                                    "Label": n.label,
+                                    "Event": f"{rel} End",
+                                    "Date": val_end
+                                })
+
+    if timeline_data:
+        df = pd.DataFrame(timeline_data)
+        # Convert Date column to datetime, drop invalid dates
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"])
+        # Sort by date
+        df.sort_values("Date", inplace=True)
+        # Use the year as the animation frame
+        df["Year"] = df["Date"].dt.year.astype(str)
+        
+        fig = px.scatter(
+            df,
+            x="Date",
+            y="Label",
+            color="Event",
+            animation_frame="Year",
+            title="Animated Timeline of Events",
+            labels={"Date": "Event Date", "Label": "Entity"}
+        )
+        fig.update_layout(transition={'duration': 500})
+        return fig
+    else:
+        return None
+
+# ------------------------------
 # Remote SPARQL Endpoint
 # ------------------------------
 def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str], List[str]]:
@@ -1392,60 +1465,71 @@ def main() -> None:
 
     with tabs[4]:
         st.header("Timeline View")
-        timeline_data = []
-        for n in st.session_state.graph_data.nodes:
-            dob = n.metadata.get("dateOfBirth")
-            if isinstance(dob, list) and dob:
-                dval = dob[0].get("time:inXSDDateTimeStamp", {}).get("@value")
-                if dval:
-                    timeline_data.append({"Label": n.label, "Event": "Birth", "Date": dval})
-            dod = n.metadata.get("dateOfDeath")
-            if isinstance(dod, list) and dod:
-                dval = dod[0].get("time:inXSDDateTimeStamp", {}).get("@value")
-                if dval:
-                    timeline_data.append({"Label": n.label, "Event": "Death", "Date": dval})
-            for rel in ["educatedAt", "employedBy"]:
-                events = n.metadata.get(rel)
-                if events:
-                    if not isinstance(events, list):
-                        events = [events]
-                    for ev in events:
-                        if isinstance(ev, dict):
-                            start = ev.get("startDate")
-                            if start:
-                                val_start = start.get("time:inXSDDateTimeStamp", {}).get("@value")
-                                if val_start:
-                                    timeline_data.append({
-                                        "Label": n.label,
-                                        "Event": f"{rel} Start",
-                                        "Date": val_start
-                                    })
-                            end = ev.get("endDate")
-                            if end:
-                                val_end = end.get("time:inXSDDateTimeStamp", {}).get("@value")
-                                if val_end:
-                                    timeline_data.append({
-                                        "Label": n.label,
-                                        "Event": f"{rel} End",
-                                        "Date": val_end
-                                    })
-
-        if timeline_data:
-            df_timeline = pd.DataFrame(timeline_data)
-            from dateutil.parser import parse
-            df_timeline["Date"] = df_timeline["Date"].apply(lambda x: parse(x))
-            fig = px.scatter(
-                df_timeline,
-                x="Date",
-                y="Label",
-                color="Event",
-                hover_data=["Event", "Date"],
-                title="Entity Timeline (Scatter Plot)"
-            )
-            fig.update_yaxes(autorange="reversed")
-            st.plotly_chart(fig)
+        
+        # Option to toggle between static and animated timeline
+        timeline_mode = st.radio("Select Timeline Mode", ["Static", "Animated"], index=1)
+        
+        if timeline_mode == "Animated":
+            animated_fig = generate_animated_timeline(st.session_state.graph_data)
+            if animated_fig:
+                st.plotly_chart(animated_fig, use_container_width=True)
+            else:
+                st.info("No timeline data available for animated view.")
         else:
-            st.info("No timeline data available.")
+            # Static timeline implementation
+            timeline_data = []
+            for n in st.session_state.graph_data.nodes:
+                dob = n.metadata.get("dateOfBirth")
+                if isinstance(dob, list) and dob:
+                    dval = dob[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+                    if dval:
+                        timeline_data.append({"Label": n.label, "Event": "Birth", "Date": dval})
+                dod = n.metadata.get("dateOfDeath")
+                if isinstance(dod, list) and dod:
+                    dval = dod[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+                    if dval:
+                        timeline_data.append({"Label": n.label, "Event": "Death", "Date": dval})
+                for rel in ["educatedAt", "employedBy"]:
+                    events = n.metadata.get(rel)
+                    if events:
+                        if not isinstance(events, list):
+                            events = [events]
+                        for ev in events:
+                            if isinstance(ev, dict):
+                                start = ev.get("startDate")
+                                if start:
+                                    val_start = start.get("time:inXSDDateTimeStamp", {}).get("@value")
+                                    if val_start:
+                                        timeline_data.append({
+                                            "Label": n.label,
+                                            "Event": f"{rel} Start",
+                                            "Date": val_start
+                                        })
+                                end = ev.get("endDate")
+                                if end:
+                                    val_end = end.get("time:inXSDDateTimeStamp", {}).get("@value")
+                                    if val_end:
+                                        timeline_data.append({
+                                            "Label": n.label,
+                                            "Event": f"{rel} End",
+                                            "Date": val_end
+                                        })
+            if timeline_data:
+                df_timeline = pd.DataFrame(timeline_data)
+                from dateutil.parser import parse
+                df_timeline["Date"] = df_timeline["Date"].apply(lambda x: parse(x))
+                fig_static = px.scatter(
+                    df_timeline,
+                    x="Date",
+                    y="Label",
+                    color="Event",
+                    hover_data=["Event", "Date"],
+                    title="Entity Timeline (Scatter Plot)"
+                )
+                fig_static.update_yaxes(autorange="reversed")
+                st.plotly_chart(fig_static, use_container_width=True)
+            else:
+                st.info("No timeline data available.")
 
     with tabs[5]:
         st.header("About Linked Data Explorer")

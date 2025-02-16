@@ -103,7 +103,7 @@ EX = Namespace("http://example.org/")  # Custom RDF namespace
 # -----------------------------------------------------------------------------
 # Custom Community Detection Function with Disassembly Strategy
 # -----------------------------------------------------------------------------
-def custom_community_detection(G: nx.Graph, max_iter: int = 20) -> List[Set[str]]:
+def custom_community_detection(G: nx.Graph, max_iter: int = 5) -> List[Set[str]]:
     """
     Runs the greedy modularity community detection iteratively.
     In each iteration, it identifies 'weak' nodes based on two criteria:
@@ -360,7 +360,7 @@ def add_node(
     entity_types: List[str],
     color: str,
     metadata: Dict[str, Any],
-    search_node: Optional[str] = None,
+    search_nodes: Optional[List[str]] = None,
     show_labels: bool = True
 ) -> None:
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
@@ -373,7 +373,7 @@ def add_node(
     if description:
         node_title += f"\nDescription: {description}"
     
-    size = 20 if (search_node is not None and node_id == search_node) else 15
+    size = 20 if (search_nodes and node_id in search_nodes) else 15
 
     net.add_node(
         node_id,
@@ -383,8 +383,8 @@ def add_node(
         shape=NODE_TYPE_SHAPES.get(entity_types[0], "dot") if entity_types else "dot",
         size=size,
         font={"size": 12 if size == 20 else 10, "face": "Arial", "color": "#343a40"},
-        borderWidth=2 if (search_node is not None and node_id == search_node) else 1,
-        borderColor="#FF5733" if (search_node is not None and node_id == search_node) else "#343a40",
+        borderWidth=2 if (search_nodes and node_id in search_nodes) else 1,
+        borderColor="#FF5733" if (search_nodes and node_id in search_nodes) else "#343a40",
         shadow=True,
         widthConstraint={"maximum": 150}
     )
@@ -396,11 +396,11 @@ def add_edge(
     dst: str,
     relationship: str,
     id_to_label: Dict[str, str],
-    search_node: Optional[str] = None
+    search_nodes: Optional[List[str]] = None
 ) -> None:
     edge_color = RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
-    is_search_edge = search_node is not None and (src == search_node or dst == search_node)
+    is_search_edge = search_nodes is not None and (src in search_nodes or dst in search_nodes)
     net.add_edge(
         src,
         dst,
@@ -418,7 +418,7 @@ def build_graph(
     graph_data: GraphData,
     id_to_label: Dict[str, str],
     selected_relationships: List[str],
-    search_node: Optional[str] = None,
+    search_nodes: Optional[List[str]] = None,
     node_positions: Optional[Dict[str, Dict[str, float]]] = None,
     show_labels: bool = True,
     filtered_nodes: Optional[Set[str]] = None,
@@ -456,7 +456,7 @@ def build_graph(
                 node.types,
                 color,
                 node.metadata,
-                search_node=search_node,
+                search_nodes=search_nodes,
                 show_labels=show_labels
             )
             added_nodes.add(node.id)
@@ -478,11 +478,12 @@ def build_graph(
                     ["Unknown"],
                     DEFAULT_NODE_COLOR,
                     {},
+                    search_nodes=search_nodes,
                     show_labels=show_labels
                 )
                 added_nodes.add(edge.target)
             if (edge.source, edge.target, edge.relationship) not in edge_set:
-                add_edge(net, edge.source, edge.target, edge.relationship, id_to_label, search_node=search_node)
+                add_edge(net, edge.source, edge.target, edge.relationship, id_to_label, search_nodes=search_nodes)
                 edge_set.add((edge.source, edge.target, edge.relationship))
 
     node_count = len(net.nodes)
@@ -984,15 +985,12 @@ def main() -> None:
         st.header("Network Graph")
         if st.session_state.graph_data.nodes:
             with st.spinner("Generating Network Graph..."):
+                search_nodes = [node.id for node in st.session_state.graph_data.nodes if st.session_state.search_term.lower() in node.label.lower()] if st.session_state.search_term.strip() else None
                 net = build_graph(
                     graph_data=st.session_state.graph_data,
                     id_to_label=st.session_state.id_to_label,
                     selected_relationships=st.session_state.selected_relationships,
-                    search_node=next(
-                        (node.id for node in st.session_state.graph_data.nodes 
-                         if node.label.lower() in node.label.lower()),
-                        None
-                    ),
+                    search_nodes=search_nodes,
                     node_positions=st.session_state.node_positions,
                     show_labels=st.session_state.show_labels,
                     filtered_nodes=filtered_nodes,

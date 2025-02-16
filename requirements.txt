@@ -1,8 +1,8 @@
-streamlit-ace>=0.3.0
-pyvis>=0.2.0
-rdflib>=6.0.0
-networkx>=2.6.0
-pandas>=1.3.0
-plotly>=5.0.0
-python-dateutil>=2.8.0
-python-louvain>=0.16
+streamlit-ace
+pyvis
+rdflib
+networkx
+pandas
+plotly
+python-dateutil
+python-louvain

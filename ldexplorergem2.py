@@ -177,6 +177,36 @@ def is_valid_iiif_manifest(url: str) -> bool:
     lower_url = url.lower()
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
 
+def validate_entity(entity: Dict[str, Any]) -> List[str]:
+    """Checks that the entity meets a basic expected schema."""
+    errors = []
+    if 'id' not in entity or not entity['id']:
+        errors.append("Missing 'id'.")
+    if 'prefLabel' not in entity or not entity['prefLabel'].get('en'):
+        errors.append("Missing 'prefLabel' with English label.")
+    return errors
+
+def format_metadata(metadata: Dict[str, Any]) -> str:
+    """Formats node metadata as a markdown bullet list with clickable links."""
+    formatted = ""
+    for key, value in metadata.items():
+        if key == 'prefLabel':
+            continue
+        formatted += f"- **{key}**: "
+        if isinstance(value, list):
+            formatted += "\n" + "\n".join([f"  - {v}" for v in value])
+        elif isinstance(value, str):
+            if value.startswith("http"):
+                formatted += f"[{value}]({value})"
+            else:
+                formatted += f"{value}"
+        elif isinstance(value, dict):
+            formatted += "\n" + "\n".join([f"  - **{subkey}**: {subvalue}" for subkey, subvalue in value.items()])
+        else:
+            formatted += str(value)
+        formatted += "\n"
+    return formatted
+
 # ------------------------------
 # Data Models Module
 # ------------------------------
@@ -214,6 +244,10 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
             subject_id: str = normalized['id']
             label: str = normalized['prefLabel']['en']
             entity_types: List[str] = normalized.get('type', ['Unknown'])
+            # Validate required schema
+            validation_errors = validate_entity(normalized)
+            if validation_errors:
+                errors.append(f"Entity '{subject_id}' errors: " + "; ".join(validation_errors))
             edges: List[Edge] = []
             for rel in RELATIONSHIP_CONFIG:
                 values = normalized.get(rel, [])
@@ -272,6 +306,91 @@ def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
     result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
     return {str(row[0]) for row in result if row[0] is not None}
 
+@st.cache_data(show_spinner=False)
+@profile_time
+def compute_centrality_measures(graph_data: GraphData) -> Dict[str, Dict[str, float]]:
+    """
+    Computes degree and betweenness centrality measures for nodes in the graph.
+    """
+    G = nx.DiGraph()
+    for node in graph_data.nodes:
+        G.add_node(node.id)
+    for node in graph_data.nodes:
+        for edge in node.edges:
+            G.add_edge(edge.source, edge.target)
+    degree = nx.degree_centrality(G)
+    betweenness = nx.betweenness_centrality(G)
+    centrality = {}
+    for node in G.nodes():
+        centrality[node] = {
+            "degree": degree.get(node, 0),
+            "betweenness": betweenness.get(node, 0)
+        }
+    return centrality
+
+def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> List[str]:
+    """
+    Retrieves the relationship types between a source and target node.
+    """
+    relationships = []
+    for node in graph_data.nodes:
+        if node.id == source:
+            for edge in node.edges:
+                if edge.target == target:
+                    relationships.append(edge.relationship)
+    return relationships
+
+# ------------------------------
+# Remote SPARQL Endpoint Loader (Optional)
+# ------------------------------
+def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str], List[str]]:
+    """
+    Loads data from a remote SPARQL endpoint and converts it into GraphData.
+    This basic implementation runs a default query (LIMIT 100).
+    """
+    errors = []
+    nodes_dict = {}
+    id_to_label = {}
+    try:
+        from rdflib.plugins.stores.sparqlstore import SPARQLStore
+        store = SPARQLStore(endpoint_url)
+        rdf_graph = RDFGraph(store=store)
+        query = "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 100"
+        results = rdf_graph.query(query)
+        for row in results:
+            s = str(row.s)
+            p = str(row.p)
+            o = str(row.o)
+            if s not in nodes_dict:
+                nodes_dict[s] = {"id": s, "prefLabel": {"en": s}, "type": ["Unknown"], "metadata": {}}
+            # Append property values to metadata
+            if p in nodes_dict[s]["metadata"]:
+                if isinstance(nodes_dict[s]["metadata"][p], list):
+                    nodes_dict[s]["metadata"][p].append(o)
+                else:
+                    nodes_dict[s]["metadata"][p] = [nodes_dict[s]["metadata"][p], o]
+            else:
+                nodes_dict[s]["metadata"][p] = o
+            # Use label if predicate indicates a label
+            if p.endswith("label"):
+                nodes_dict[s]["prefLabel"] = {"en": o}
+        nodes = []
+        for s, data in nodes_dict.items():
+            node = Node(
+                id=data["id"],
+                label=data["prefLabel"]["en"],
+                types=data.get("type", ["Unknown"]),
+                metadata=data["metadata"],
+                edges=[]
+            )
+            nodes.append(node)
+            id_to_label[s] = data["prefLabel"]["en"]
+        graph_data = GraphData(nodes=nodes)
+    except Exception as e:
+        errors.append(f"Error loading from SPARQL endpoint: {e}")
+        graph_data = GraphData(nodes=[])
+    return graph_data, id_to_label, errors
+
 # ------------------------------
 # Graph Building Module
 # ------------------------------
@@ -283,7 +402,8 @@ def add_node(
     color: str,
     metadata: Dict[str, Any],
     search_nodes: Optional[List[str]] = None,
-    show_labels: bool = True
+    show_labels: bool = True,
+    custom_size: Optional[int] = None
 ) -> None:
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
     description = ""
@@ -295,7 +415,7 @@ def add_node(
     if description:
         node_title += f"\nDescription: {description}"
     
-    size = 20 if (search_nodes and node_id in search_nodes) else 15
+    size = custom_size if custom_size is not None else (20 if (search_nodes and node_id in search_nodes) else 15)
 
     net.add_node(
         node_id,
@@ -304,7 +424,7 @@ def add_node(
         color=color,
         shape=NODE_TYPE_SHAPES.get(entity_types[0], "dot") if entity_types else "dot",
         size=size,
-        font={"size": 12 if size == 20 else 10, "face": "Arial", "color": "#343a40"},
+        font={"size": 12 if size >= 20 else 10, "face": "Arial", "color": "#343a40"},
         borderWidth=2 if (search_nodes and node_id in search_nodes) else 1,
         borderColor="#FF5733" if (search_nodes and node_id in search_nodes) else "#343a40",
         shadow=True,
@@ -318,17 +438,20 @@ def add_edge(
     dst: str,
     relationship: str,
     id_to_label: Dict[str, str],
-    search_nodes: Optional[List[str]] = None
+    search_nodes: Optional[List[str]] = None,
+    custom_width: Optional[int] = None,
+    custom_color: Optional[str] = None
 ) -> None:
-    edge_color = RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9")
-    label_text = " ".join(word.capitalize() for word in relationship.split('_'))
     is_search_edge = search_nodes is not None and (src in search_nodes or dst in search_nodes)
+    edge_color = custom_color if custom_color is not None else (RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9"))
+    label_text = " ".join(word.capitalize() for word in relationship.split('_'))
+    width = custom_width if custom_width is not None else (3 if is_search_edge else 2)
     net.add_edge(
         src,
         dst,
         label=label_text,
-        color="#FF5733" if is_search_edge else edge_color,
-        width=3 if is_search_edge else 2,
+        color=edge_color,
+        width=width,
         arrows='to',
         title=f"{label_text}: {id_to_label.get(src, src)} → {id_to_label.get(dst, dst)}",
         font={"size": 10 if is_search_edge else 8, "align": "middle"},
@@ -345,7 +468,9 @@ def build_graph(
     node_positions: Optional[Dict[str, Dict[str, float]]] = None,
     show_labels: bool = True,
     filtered_nodes: Optional[Set[str]] = None,
-    community_detection: bool = False
+    community_detection: bool = False,
+    centrality: Optional[Dict[str, Dict[str, float]]] = None,
+    path_nodes: Optional[List[str]] = None
 ) -> Network:
     net = Network(
         height="750px",
@@ -365,12 +490,23 @@ def build_graph(
     added_nodes: Set[str] = set()
     edge_set: Set[Tuple[str, str, str]] = set()
 
+    # Prepare edge set for path highlighting (if path found)
+    path_edge_set = set(zip(path_nodes, path_nodes[1:])) if path_nodes else set()
+
     # Add nodes
     for node in graph_data.nodes:
         if filtered_nodes is not None and node.id not in filtered_nodes:
             logging.debug(f"Skipping node {node.id} due to filtering")
             continue
         color = next((NODE_TYPE_COLORS.get(t, DEFAULT_NODE_COLOR) for t in node.types), DEFAULT_NODE_COLOR)
+        # Determine custom size based on centrality if enabled
+        custom_size = None
+        if centrality and node.id in centrality:
+            # Scale degree centrality (0 to 1) to an extra size factor
+            custom_size = int(15 + centrality[node.id]["degree"] * 30)
+        # Further increase size if node is part of the shortest path
+        if path_nodes and node.id in path_nodes:
+            custom_size = max(custom_size or 15, 25)
         if node.id not in added_nodes:
             add_node(
                 net,
@@ -380,7 +516,8 @@ def build_graph(
                 color,
                 node.metadata,
                 search_nodes=search_nodes,
-                show_labels=show_labels
+                show_labels=show_labels,
+                custom_size=custom_size
             )
             added_nodes.add(node.id)
 
@@ -406,7 +543,17 @@ def build_graph(
                 )
                 added_nodes.add(edge.target)
             if (edge.source, edge.target, edge.relationship) not in edge_set:
-                add_edge(net, edge.source, edge.target, edge.relationship, id_to_label, search_nodes=search_nodes)
+                # Check if edge is part of the highlighted path
+                if path_nodes and (edge.source, edge.target) in path_edge_set:
+                    custom_width = 4
+                    custom_color = "#FF0000"
+                else:
+                    custom_width = None
+                    custom_color = None
+                add_edge(net, edge.source, edge.target, edge.relationship, id_to_label,
+                         search_nodes=search_nodes,
+                         custom_width=custom_width,
+                         custom_color=custom_color)
                 edge_set.add((edge.source, edge.target, edge.relationship))
 
     node_count = len(net.nodes)
@@ -662,8 +809,8 @@ def main() -> None:
 
     with st.expander("How to Use This App"):
         st.write("1. Upload your JSON or JSON‑LD files in the **File Upload** section on the sidebar.")
-        st.write("2. Adjust visualization settings like physics or filter by entity types.")
-        st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes.")
+        st.write("2. Adjust visualization settings like physics, filtering, and (optionally) enable centrality measures.")
+        st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes or load data from a remote SPARQL endpoint.")
         st.write("4. Explore the graph in the **Graph View** tab below!")
         st.write("5. Manually set node positions using the sidebar.")
 
@@ -702,9 +849,18 @@ def main() -> None:
         st.session_state.modal_action = None
     if "modal_node" not in st.session_state:
         st.session_state.modal_node = None
+    if "centrality_enabled" not in st.session_state:
+        st.session_state.centrality_enabled = False
+    if "centrality_measures" not in st.session_state:
+        st.session_state.centrality_measures = None
+    if "shortest_path" not in st.session_state:
+        st.session_state.shortest_path = None
+    if "property_filter" not in st.session_state:
+        st.session_state.property_filter = {"property": "", "value": ""}
 
     # ---------------- Sidebar: File Upload and Visualization Settings ----------------
     with st.sidebar.expander("File Upload"):
+        # Option to load local JSON files
         uploaded_files = st.sidebar.file_uploader(
             label="Upload JSON Files",
             type=["json", "jsonld"],
@@ -721,9 +877,28 @@ def main() -> None:
             except Exception as e:
                 st.error(f"Error converting graph data to RDF: {e}")
             if errors:
-                for error in errors:
-                    st.error(error)
-    
+                with st.expander("Data Validation"):
+                    for error in errors:
+                        st.error(error)
+        
+        # Option to load data from a remote SPARQL endpoint
+        st.markdown("---")
+        st.subheader("Remote SPARQL Endpoint")
+        endpoint_url = st.text_input("Enter SPARQL Endpoint URL", key="sparql_endpoint_url")
+        if st.button("Load from SPARQL Endpoint"):
+            remote_graph, remote_id_to_label, sparql_errors = load_data_from_sparql(endpoint_url)
+            if sparql_errors:
+                for err in sparql_errors:
+                    st.error(err)
+            else:
+                st.success("Data loaded from SPARQL endpoint.")
+                st.session_state.graph_data = remote_graph
+                st.session_state.id_to_label = remote_id_to_label
+                try:
+                    st.session_state.rdf_graph = convert_graph_data_to_rdf(remote_graph)
+                except Exception as e:
+                    st.error(f"Error converting SPARQL data to RDF: {e}")
+
     with st.sidebar.expander("Visualization Settings"):
         community_detection = st.checkbox("Enable Community Detection", value=False, key="community_detection")
         
@@ -768,7 +943,12 @@ def main() -> None:
                 step=0.01,
                 key="springStrength_input"
             )
-    
+        # Toggle centrality measures display
+        st.session_state.centrality_enabled = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
+        if st.session_state.centrality_enabled and st.session_state.graph_data.nodes:
+            st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
+            st.info("Centrality measures computed.")
+
     with st.sidebar.expander("Graph Editing"):
         ge_tabs = st.tabs(["Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"])
         nodes_list: List[Node] = st.session_state.graph_data.nodes
@@ -893,44 +1073,33 @@ def main() -> None:
                     st.session_state.node_positions[selected_node] = {"x": x_pos, "y": y_pos}
                     st.success(f"Position for '{unique_nodes[selected_node]}' set to (X: {x_pos}, Y: {y_pos})")
 
-    if st.session_state.graph_data.nodes:
-        all_types = {t for node in st.session_state.graph_data.nodes for t in node.types}
-        default_types = [t for t in ["Person", "Organization"] if t in all_types]
-        if "filtered_types_control" not in st.session_state:
-            st.session_state.filtered_types_control = default_types
-        st.session_state.filtered_types = st.sidebar.multiselect(
-            "Filter by Entity Types",
-            options=list(all_types),
-            key="filtered_types_control"
-        )
+    # ---------------- Advanced Filtering ----------------
+    with st.sidebar.expander("Advanced Filtering"):
+        st.subheader("Property-based Filtering")
+        prop_name = st.text_input("Property Name", key="filter_prop_name")
+        prop_value = st.text_input("Property Value", key="filter_prop_value")
+        if st.button("Apply Property Filter"):
+            st.session_state.property_filter = {"property": prop_name, "value": prop_value}
+            st.success("Property filter applied.")
+        # Relationship Type Filtering: get unique relationship types from loaded edges
+        unique_rels = set()
+        for node in st.session_state.graph_data.nodes:
+            for edge in node.edges:
+                unique_rels.add(edge.relationship)
+        selected_rels = st.multiselect("Select Relationship Types", options=sorted(list(unique_rels)), default=list(unique_rels))
+        st.session_state.selected_relationships = selected_rels if selected_rels else list(RELATIONSHIP_CONFIG.keys())
     
-    st.session_state.search_term = st.sidebar.text_input(
-        "Search for a Node",
-        help="Enter the entity name to highlight",
-        key="search_term_control",
-        value=st.session_state.search_term
+    # ---------------- SPARQL Query Input ----------------
+    st.session_state.sparql_query = st.sidebar.text_area(
+        "SPARQL Query",
+        help="Enter a SPARQL SELECT query to filter nodes.",
+        key="sparql_query_control",
+        value=st.session_state.sparql_query
     )
-    if ace_installed:
-        sparql_query_input = st_ace(
-            value=st.session_state.sparql_query,
-            language='sparql',
-            theme="github",
-            height=150,
-            key="sparql_query_control"
-        )
-    else:
-        sparql_query_input = st.sidebar.text_area(
-            "SPARQL Query",
-            help="Enter a SPARQL SELECT query to filter nodes.",
-            key="sparql_query_control",
-            value=st.session_state.sparql_query
-        )
-    st.session_state.sparql_query = sparql_query_input
-
-    if sparql_query_input.strip():
+    if st.session_state.sparql_query.strip():
         st.sidebar.info("Query Running...")
         try:
-            filtered_nodes = run_sparql_query(sparql_query_input, st.session_state.rdf_graph)
+            filtered_nodes = run_sparql_query(st.session_state.sparql_query, st.session_state.rdf_graph)
             st.sidebar.success(f"Query Successful: {len(filtered_nodes)} result(s) found.")
             st.sidebar.dataframe(pd.DataFrame(list(filtered_nodes), columns=["Node ID"]))
         except Exception as e:
@@ -947,6 +1116,29 @@ def main() -> None:
         }
         filtered_nodes = filtered_nodes.intersection(filtered_by_type) if filtered_nodes is not None else filtered_by_type
 
+    # ---------------- Graph Pathfinding ----------------
+    with st.sidebar.expander("Graph Pathfinding"):
+        if st.session_state.graph_data.nodes:
+            source_pf = st.selectbox("Source Node", [node.id for node in st.session_state.graph_data.nodes], key="pf_source")
+            target_pf = st.selectbox("Target Node", [node.id for node in st.session_state.graph_data.nodes], key="pf_target")
+            if st.button("Find Shortest Path"):
+                try:
+                    # Build a directed graph from current data
+                    G_pf = nx.DiGraph()
+                    for node in st.session_state.graph_data.nodes:
+                        G_pf.add_node(node.id)
+                    for node in st.session_state.graph_data.nodes:
+                        for edge in node.edges:
+                            G_pf.add_edge(edge.source, edge.target)
+                    sp = nx.shortest_path(G_pf, source=source_pf, target=target_pf)
+                    st.session_state.shortest_path = sp
+                    st.success(f"Shortest path found with {len(sp)-1} edges.")
+                except Exception as e:
+                    st.session_state.shortest_path = None
+                    st.error(f"Pathfinding failed: {e}")
+        else:
+            st.info("No nodes available for pathfinding.")
+
     tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "Timeline", "About"])
     
     with tabs[0]:
@@ -954,6 +1146,15 @@ def main() -> None:
         if st.session_state.graph_data.nodes:
             with st.spinner("Generating Network Graph..."):
                 search_nodes = [node.id for node in st.session_state.graph_data.nodes if st.session_state.search_term.lower() in node.label.lower()] if st.session_state.search_term.strip() else None
+                # Apply property filter if set
+                if st.session_state.property_filter["property"] and st.session_state.property_filter["value"]:
+                    prop = st.session_state.property_filter["property"]
+                    val = st.session_state.property_filter["value"].lower()
+                    filtered_prop_nodes = {
+                        node.id for node in st.session_state.graph_data.nodes
+                        if prop in node.metadata and val in str(node.metadata[prop]).lower()
+                    }
+                    filtered_nodes = filtered_nodes.intersection(filtered_prop_nodes) if filtered_nodes is not None else filtered_prop_nodes
                 net = build_graph(
                     graph_data=st.session_state.graph_data,
                     id_to_label=st.session_state.id_to_label,
@@ -962,7 +1163,9 @@ def main() -> None:
                     node_positions=st.session_state.node_positions,
                     show_labels=st.session_state.show_labels,
                     filtered_nodes=filtered_nodes,
-                    community_detection=community_detection
+                    community_detection=community_detection,
+                    centrality=st.session_state.centrality_measures,
+                    path_nodes=st.session_state.shortest_path
                 )
             if community_detection:
                 st.info("Community detection applied to node colors.")
@@ -978,24 +1181,24 @@ def main() -> None:
             st.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
             
+            # Improved Node Metadata Display
+            st.markdown("#### Node Metadata")
             if st.session_state.selected_node:
-                st.markdown("#### Node Metadata")
                 node_obj = next((node for node in st.session_state.graph_data.nodes if node.id == st.session_state.selected_node), None)
                 if node_obj:
-                    st.markdown(f"**Label:** {st.session_state.id_to_label.get(node_obj.id, node_obj.id)}")
-                    if isinstance(node_obj.metadata, dict):
-                        for key, value in node_obj.metadata.items():
-                            if key == 'prefLabel':
-                                continue
-                            st.markdown(f"**{key}:** {value}")
-                    else:
-                        st.write("Metadata:", node_obj.metadata)
+                    md_content = f"**Label:** {st.session_state.id_to_label.get(node_obj.id, node_obj.id)}\n\n"
+                    if st.session_state.centrality_measures and node_obj.id in st.session_state.centrality_measures:
+                        cent = st.session_state.centrality_measures[node_obj.id]
+                        md_content += f"- **Degree Centrality:** {cent['degree']:.3f}\n"
+                        md_content += f"- **Betweenness Centrality:** {cent['betweenness']:.3f}\n\n"
+                    md_content += format_metadata(node_obj.metadata)
+                    st.markdown(md_content)
                 else:
                     st.write("No metadata available for this node.")
             else:
-                st.markdown("#### Node Metadata")
                 st.info("Select a node from the sidebar to view its metadata.")
             
+            # Map view for nodes with geographic coordinates
             place_locations = []
             for node in st.session_state.graph_data.nodes:
                 if isinstance(node.metadata, dict) and "geographicCoordinates" in node.metadata:
@@ -1075,6 +1278,20 @@ def main() -> None:
             else:
                 st.info("No entity with a manifest found.")
             
+            # Display pathfinding result if available
+            if st.session_state.shortest_path:
+                st.subheader("Shortest Path Details")
+                path = st.session_state.shortest_path
+                path_text = " → ".join([st.session_state.id_to_label.get(n, n) for n in path])
+                st.text_area("Shortest Path", value=path_text, height=50)
+                # Optionally, list relationship types along the path
+                rel_text = ""
+                for i in range(len(path)-1):
+                    rels = get_edge_relationship(path[i], path[i+1], st.session_state.graph_data)
+                    rel_text += f"{st.session_state.id_to_label.get(path[i], path[i])} -- {', '.join(rels)} --> "
+                rel_text += st.session_state.id_to_label.get(path[-1], path[-1])
+                st.text_area("Path Relationships", value=rel_text, height=50)
+            
             with st.expander("Export Options", expanded=True):
                 if "graph_html" in st.session_state:
                     st.download_button(
@@ -1112,9 +1329,9 @@ def main() -> None:
     with tabs[2]:
         st.header("SPARQL Query")
         st.markdown("Enter a SPARQL SELECT query in the sidebar and view the results here.")
-        if sparql_query_input.strip():
+        if st.session_state.sparql_query.strip():
             try:
-                query_results = run_sparql_query(sparql_query_input, st.session_state.rdf_graph)
+                query_results = run_sparql_query(st.session_state.sparql_query, st.session_state.rdf_graph)
                 st.success(f"Query returned {len(query_results)} result(s).")
                 st.dataframe(pd.DataFrame(list(query_results), columns=["Node ID"]))
             except Exception as e:
@@ -1197,10 +1414,12 @@ def main() -> None:
             
             **Features:**
             - **Tabbed Interface:** Separate views for the graph, raw data, SPARQL queries, timeline, and about information.
-            - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning and optional community detection.
+            - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning, centrality measures, and optional community detection.
             - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
+            - **Advanced Filtering:** Filter nodes by properties and relationship types.
+            - **Pathfinding:** Find and visually highlight the shortest path between nodes.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
             **Version:** 1.3.5+Refactored  

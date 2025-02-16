@@ -1407,6 +1407,10 @@ def main() -> None:
         st.header("Centrality Measures")
         if st.session_state.centrality_measures:
             centrality_df = pd.DataFrame.from_dict(st.session_state.centrality_measures, orient='index').reset_index().rename(columns={"index": "Node ID"})
+            centrality_df["Label"] = centrality_df["Node ID"].map(st.session_state.id_to_label)
+            # Optional: Reorder columns so "Node ID" and "Label" come first.
+            cols = ["Node ID", "Label"] + [col for col in centrality_df.columns if col not in ("Node ID", "Label")]
+            centrality_df = centrality_df[cols]
             st.dataframe(centrality_df)
             csv_data = centrality_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Centrality Measures as CSV", data=csv_data, file_name="centrality_measures.csv", mime="text/csv")

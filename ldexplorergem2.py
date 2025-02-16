@@ -15,11 +15,11 @@ import logging
 import traceback
 import time
 import functools
+import re  # For sanitizing labels/IDs
 from urllib.parse import urlparse, urlunparse
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
-import re  # We'll sanitize labels/IDs in case they have weird control chars
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
@@ -146,15 +146,18 @@ def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     return None
 
 def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    if not isinstance(data, dict):
-        raise ValueError("Invalid data format. Expected a dictionary.")
-    
+    # Ensure required fields exist
+    if 'id' not in data or not data['id']:
+        raise ValueError("Entity is missing an 'id'.")
     data['id'] = remove_fragment(data.get('id', ''))
-    data.setdefault('prefLabel', {})['en'] = data.get('prefLabel', {}).get('en', data['id'])
-
+    # Set default prefLabel if missing
+    if 'prefLabel' not in data or not isinstance(data['prefLabel'], dict) or 'en' not in data['prefLabel']:
+        data['prefLabel'] = {'en': data.get('id', 'unknown')}
     # Ensure 'type' is always a list
     if 'type' in data:
         data['type'] = data['type'] if isinstance(data['type'], list) else [data['type']]
+    else:
+        data['type'] = ["Unknown"]
 
     for rel in list(data.keys()):
         if rel not in RELATIONSHIP_CONFIG:
@@ -436,9 +439,7 @@ def add_node(
     if description:
         node_title += f"\nDescription: {description}"
 
-    size = custom_size if custom_size is not None else (
-        20 if (search_nodes and node_id in search_nodes) else 15
-    )
+    size = custom_size if custom_size is not None else (20 if (search_nodes and node_id in search_nodes) else 15)
 
     net.add_node(
         node_id,
@@ -514,7 +515,6 @@ def build_graph(
 
     added_nodes: Set[str] = set()
     edge_set: Set[Tuple[str, str, str]] = set()
-
     path_edge_set = set(zip(path_nodes, path_nodes[1:])) if path_nodes else set()
 
     for node in graph_data.nodes:
@@ -552,8 +552,7 @@ def build_graph(
         for edge in node.edges:
             if edge.relationship not in selected_relationships:
                 continue
-            if filtered_nodes is not None and \
-               (edge.source not in filtered_nodes or edge.target not in filtered_nodes):
+            if filtered_nodes is not None and (edge.source not in filtered_nodes or edge.target not in filtered_nodes):
                 logging.debug(f"Skipping edge {edge.source} --{edge.relationship}--> {edge.target} due to filtering")
                 continue
 
@@ -975,7 +974,6 @@ def main() -> None:
                 key="springStrength_input"
             )
 
-        # Use a local var for the checkbox
         enable_centrality = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
         if enable_centrality and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
@@ -1105,27 +1103,16 @@ def main() -> None:
             st.session_state.property_filter = {"property": prop_name, "value": prop_value}
             st.success("Property filter applied.")
 
-        # Relationship filtering
         all_rels = set()
         for n in st.session_state.graph_data.nodes:
             for e in n.edges:
                 all_rels.add(e.relationship)
-        chosen_rels = st.multiselect(
-            "Select Relationship Types", 
-            sorted(all_rels), 
-            default=list(all_rels)
-        )
+        chosen_rels = st.multiselect("Select Relationship Types", sorted(all_rels), default=list(all_rels))
         st.session_state.selected_relationships = chosen_rels if chosen_rels else list(RELATIONSHIP_CONFIG.keys())
 
-        # Node type filtering
         st.subheader("Filter by Node Type")
         unique_types = sorted({t for n in st.session_state.graph_data.nodes for t in n.types})
-        chosen_types = st.multiselect(
-            "Select Node Types",
-            options=unique_types,
-            default=unique_types,
-            key="filter_node_types"
-        )
+        chosen_types = st.multiselect("Select Node Types", options=unique_types, default=unique_types, key="filter_node_types")
         st.session_state.filtered_types = chosen_types
 
     st.session_state.sparql_query = st.sidebar.text_area(
@@ -1148,9 +1135,7 @@ def main() -> None:
 
     if st.session_state.filtered_types:
         filter_by_type = {
-            n.id
-            for n in st.session_state.graph_data.nodes
-            if any(t in st.session_state.filtered_types for t in n.types)
+            n.id for n in st.session_state.graph_data.nodes if any(t in st.session_state.filtered_types for t in n.types)
         }
         filtered_nodes = filtered_nodes.intersection(filter_by_type) if filtered_nodes is not None else filter_by_type
 
@@ -1241,7 +1226,6 @@ def main() -> None:
             else:
                 st.info("Select a node from the sidebar to view its metadata.")
 
-            # Map View
             place_locations = []
             for n in st.session_state.graph_data.nodes:
                 if isinstance(n.metadata, dict) and "geographicCoordinates" in n.metadata:
@@ -1322,20 +1306,14 @@ def main() -> None:
             else:
                 st.info("No entity with a manifest found.")
 
-            # Shortest Path
             if st.session_state.shortest_path:
                 st.subheader("Shortest Path Details")
-
-                # Build a user-friendly path text, sanitize weird chars
                 path_list = st.session_state.shortest_path
                 path_text = " → ".join([st.session_state.id_to_label.get(x, x) for x in path_list])
                 path_text = re.sub(r'[^\x20-\x7E]+', '', path_text)
                 if len(path_text) > 1000:
                     path_text = path_text[:1000] + "... [truncated]"
-
                 st.text_area("Shortest Path", value=path_text, height=50)
-
-                # Relationship text
                 rel_text = ""
                 for i in range(len(path_list) - 1):
                     rels = get_edge_relationship(path_list[i], path_list[i+1], st.session_state.graph_data)
@@ -1344,7 +1322,6 @@ def main() -> None:
                 rel_text = re.sub(r'[^\x20-\x7E]+', '', rel_text)
                 if len(rel_text) > 1000:
                     rel_text = rel_text[:1000] + "... [truncated]"
-
                 st.text_area("Path Relationships", value=rel_text, height=50)
 
             with st.expander("Export Options", expanded=True):
@@ -1367,12 +1344,10 @@ def main() -> None:
         else:
             st.info("No valid data found. Please check your JSON files.")
 
-    # ---------------- Data View Tab
     with tabs[1]:
         st.header("Data View")
         st.subheader("Graph Nodes")
         if st.session_state.graph_data.nodes:
-            # Sanitize any weird control chars in the node data
             data_rows = []
             for n in st.session_state.graph_data.nodes:
                 safe_id = re.sub(r'[^\x20-\x7E]+', '', n.id)
@@ -1390,7 +1365,6 @@ def main() -> None:
         else:
             st.info("No data available. Please upload JSON files.")
     
-    # ---------------- SPARQL Query Tab
     with tabs[2]:
         st.header("SPARQL Query")
         st.markdown("Enter a SPARQL SELECT query in the sidebar and view the results here.")
@@ -1404,7 +1378,6 @@ def main() -> None:
         else:
             st.info("No query entered.")
 
-    # ---------------- Timeline Tab
     with tabs[3]:
         st.header("Timeline View")
         timeline_data = []
@@ -1462,7 +1435,6 @@ def main() -> None:
         else:
             st.info("No timeline data available.")
 
-    # ---------------- About Tab
     with tabs[4]:
         st.header("About Linked Data Explorer")
         st.markdown(

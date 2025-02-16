@@ -1229,6 +1229,7 @@ def main() -> None:
                     }
                     filtered_nodes = filtered_nodes.intersection(prop_nodes) if filtered_nodes is not None else prop_nodes
 
+                    # Build the network graph
                 net = build_graph(
                     graph_data=st.session_state.graph_data,
                     id_to_label=st.session_state.id_to_label,
@@ -1241,8 +1242,8 @@ def main() -> None:
                     centrality=st.session_state.centrality_measures,
                     path_nodes=st.session_state.shortest_path
                 )
-            html_content = str(net.generate_html() + custom_js)
-            returned_positions = components.html(html_content, height=750, scrolling=True, key="graph_component")
+            # Use the pre-generated HTML from build_graph (which already includes custom_js)
+            returned_positions = components.html(net.html, height=750, scrolling=True, key="graph_component")
             if returned_positions:
                 try:
                     st.session_state.node_positions = json.loads(returned_positions)

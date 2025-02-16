@@ -83,7 +83,8 @@ CONFIG = {
         "educatedAt": "#8B4513",
         "foundedBy": "#FF6347",
         "containedInPlace": "#F39C12",
-        "owner": "#3498DB"
+        "owner": "#3498DB",
+        "isPartOf": "#B39DDB"
     },
     "NODE_TYPE_COLORS": {
         "Person": "#FFA500",

@@ -1001,6 +1001,27 @@ def main() -> None:
         else:
             st.info("No nodes available for annotation.")
 
+    with st.sidebar.expander("Graph Pathfinding"):
+        if st.session_state.graph_data.nodes:
+            source_pf = st.selectbox("Source Node", [n.id for n in st.session_state.graph_data.nodes], key="pf_source")
+            target_pf = st.selectbox("Target Node", [n.id for n in st.session_state.graph_data.nodes], key="pf_target")
+            if st.button("Find Shortest Path"):
+                try:
+                    G_pf = nx.DiGraph()
+                    for n in st.session_state.graph_data.nodes:
+                        G_pf.add_node(n.id)
+                    for n in st.session_state.graph_data.nodes:
+                        for e in n.edges:
+                            G_pf.add_edge(e.source, e.target)
+                    sp = nx.shortest_path(G_pf, source=source_pf, target=target_pf)
+                    st.session_state.shortest_path = sp
+                    st.success(f"Shortest path found with {len(sp)-1} edges.")
+                except Exception as e:
+                    st.session_state.shortest_path = None
+                    st.error(f"Pathfinding failed: {e}")
+        else:
+            st.info("No nodes available for pathfinding.")
+
     with st.sidebar.expander("Graph Editing"):
         ge_tabs = st.tabs(["Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"])
         nodes_list = st.session_state.graph_data.nodes
@@ -1465,6 +1486,7 @@ def main() -> None:
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
             - **Advanced Filtering:** Filter nodes by properties, relationship types, and node types.
             - **Pathfinding:** Find and visually highlight the shortest path between nodes.
+            - **Node Annotations:** Add custom annotations to nodes.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
             **Version:** 1.3.5+Refactored  

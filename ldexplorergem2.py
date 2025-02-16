@@ -944,7 +944,7 @@ def main() -> None:
                 key="springStrength_input"
             )
         # Toggle centrality measures display
-        centrality_enabled = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
+        st.session_state.centrality_enabled = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
         if st.session_state.centrality_enabled and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")
@@ -1081,6 +1081,7 @@ def main() -> None:
         if st.button("Apply Property Filter"):
             st.session_state.property_filter = {"property": prop_name, "value": prop_value}
             st.success("Property filter applied.")
+
         # Relationship Type Filtering: get unique relationship types from loaded edges
         unique_rels = set()
         for node in st.session_state.graph_data.nodes:
@@ -1088,7 +1089,13 @@ def main() -> None:
                 unique_rels.add(edge.relationship)
         selected_rels = st.multiselect("Select Relationship Types", options=sorted(list(unique_rels)), default=list(unique_rels))
         st.session_state.selected_relationships = selected_rels if selected_rels else list(RELATIONSHIP_CONFIG.keys())
-    
+        
+        # Node Type Filtering (FIX APPLIED HERE)
+        st.subheader("Filter by Node Type")
+        unique_types = sorted({t for node in st.session_state.graph_data.nodes for t in node.types})
+        selected_types = st.multiselect("Select Node Types", options=unique_types, default=unique_types, key="filter_node_types")
+        st.session_state.filtered_types = selected_types
+
     # ---------------- SPARQL Query Input ----------------
     st.session_state.sparql_query = st.sidebar.text_area(
         "SPARQL Query",
@@ -1108,6 +1115,7 @@ def main() -> None:
     else:
         filtered_nodes = None
 
+    # If node types are selected, filter by those
     if st.session_state.filtered_types:
         filtered_by_type = {
             node.id 
@@ -1145,7 +1153,11 @@ def main() -> None:
         st.header("Network Graph")
         if st.session_state.graph_data.nodes:
             with st.spinner("Generating Network Graph..."):
-                search_nodes = [node.id for node in st.session_state.graph_data.nodes if st.session_state.search_term.lower() in node.label.lower()] if st.session_state.search_term.strip() else None
+                # If there's a search term, get matching nodes
+                search_nodes = [node.id for node in st.session_state.graph_data.nodes 
+                                if st.session_state.search_term.lower() in node.label.lower()] \
+                               if st.session_state.search_term.strip() else None
+
                 # Apply property filter if set
                 if st.session_state.property_filter["property"] and st.session_state.property_filter["value"]:
                     prop = st.session_state.property_filter["property"]
@@ -1155,6 +1167,7 @@ def main() -> None:
                         if prop in node.metadata and val in str(node.metadata[prop]).lower()
                     }
                     filtered_nodes = filtered_nodes.intersection(filtered_prop_nodes) if filtered_nodes is not None else filtered_prop_nodes
+
                 net = build_graph(
                     graph_data=st.session_state.graph_data,
                     id_to_label=st.session_state.id_to_label,
@@ -1418,7 +1431,7 @@ def main() -> None:
             - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
-            - **Advanced Filtering:** Filter nodes by properties and relationship types.
+            - **Advanced Filtering:** Filter nodes by properties, relationship types, **and** node types!
             - **Pathfinding:** Find and visually highlight the shortest path between nodes.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             

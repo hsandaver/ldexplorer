@@ -360,77 +360,94 @@ def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> Li
     return relationships
 
 # ------------------------------
-# Animated Timeline Function
+# Animated Timeline Function (Updated)
 # ------------------------------
 def generate_animated_timeline(graph_data: GraphData) -> Optional[px.scatter]:
     """
-    Extracts timeline events from graph_data and creates an animated timeline using Plotly Express.
-    Each frame represents a year.
+    Create an animated timeline from graph data.
+    Each timeline event (e.g., Birth, Death, Education, Employment) is captured,
+    and the animation shows events grouped by year.
+    Uses 'animation_group' so that each entity persists across frames.
     """
-    timeline_data = []
-    for n in graph_data.nodes:
-        # Birth event
-        dob = n.metadata.get("dateOfBirth")
-        if isinstance(dob, list) and dob:
-            dval = dob[0].get("time:inXSDDateTimeStamp", {}).get("@value")
-            if dval:
-                timeline_data.append({"Label": n.label, "Event": "Birth", "Date": dval})
-        # Death event
-        dod = n.metadata.get("dateOfDeath")
-        if isinstance(dod, list) and dod:
-            dval = dod[0].get("time:inXSDDateTimeStamp", {}).get("@value")
-            if dval:
-                timeline_data.append({"Label": n.label, "Event": "Death", "Date": dval})
-        # Other events (e.g., educatedAt, employedBy)
-        for rel in ["educatedAt", "employedBy"]:
-            events = n.metadata.get(rel)
-            if events:
-                if not isinstance(events, list):
-                    events = [events]
-                for ev in events:
-                    if isinstance(ev, dict):
-                        start = ev.get("startDate")
-                        if start:
-                            val_start = start.get("time:inXSDDateTimeStamp", {}).get("@value")
-                            if val_start:
-                                timeline_data.append({
-                                    "Label": n.label,
-                                    "Event": f"{rel} Start",
-                                    "Date": val_start
-                                })
-                        end = ev.get("endDate")
-                        if end:
-                            val_end = end.get("time:inXSDDateTimeStamp", {}).get("@value")
-                            if val_end:
-                                timeline_data.append({
-                                    "Label": n.label,
-                                    "Event": f"{rel} End",
-                                    "Date": val_end
-                                })
+    events = []  # List to store event dictionaries
 
-    if timeline_data:
-        df = pd.DataFrame(timeline_data)
-        # Convert Date column to datetime, drop invalid dates
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df = df.dropna(subset=["Date"])
-        # Sort by date
-        df.sort_values("Date", inplace=True)
-        # Use the year as the animation frame
-        df["Year"] = df["Date"].dt.year.astype(str)
-        
-        fig = px.scatter(
-            df,
-            x="Date",
-            y="Label",
-            color="Event",
-            animation_frame="Year",
-            title="Animated Timeline of Events",
-            labels={"Date": "Event Date", "Label": "Entity"}
-        )
-        fig.update_layout(transition={'duration': 500})
-        return fig
-    else:
+    for node in graph_data.nodes:
+        # Capture Birth events
+        dob = node.metadata.get("dateOfBirth")
+        if isinstance(dob, list) and dob:
+            date_value = dob[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+            if date_value:
+                events.append({
+                    "Entity": node.label,
+                    "Event": "Birth",
+                    "Date": date_value
+                })
+        # Capture Death events
+        dod = node.metadata.get("dateOfDeath")
+        if isinstance(dod, list) and dod:
+            date_value = dod[0].get("time:inXSDDateTimeStamp", {}).get("@value")
+            if date_value:
+                events.append({
+                    "Entity": node.label,
+                    "Event": "Death",
+                    "Date": date_value
+                })
+        # Capture other events (e.g., education and employment)
+        for relation in ["educatedAt", "employedBy"]:
+            rel_events = node.metadata.get(relation)
+            if not rel_events:
+                continue
+            if not isinstance(rel_events, list):
+                rel_events = [rel_events]
+            for ev in rel_events:
+                if isinstance(ev, dict):
+                    start = ev.get("startDate")
+                    if start:
+                        start_date = start.get("time:inXSDDateTimeStamp", {}).get("@value")
+                        if start_date:
+                            events.append({
+                                "Entity": node.label,
+                                "Event": f"{relation} Start",
+                                "Date": start_date
+                            })
+                    end = ev.get("endDate")
+                    if end:
+                        end_date = end.get("time:inXSDDateTimeStamp", {}).get("@value")
+                        if end_date:
+                            events.append({
+                                "Entity": node.label,
+                                "Event": f"{relation} End",
+                                "Date": end_date
+                            })
+
+    if not events:
         return None
+
+    # Create DataFrame from events
+    df = pd.DataFrame(events)
+    # Convert dates and drop invalid ones
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    df.sort_values("Date", inplace=True)
+    # Create 'Year' column for animation frames
+    df["Year"] = df["Date"].dt.year.astype(str)
+
+    # Debug: Log number of events and unique years
+    logging.info(f"Total events: {len(df)}; Unique years: {df['Year'].nunique()}")
+
+    # Create animated scatter plot with animation_group so entities persist across frames
+    fig = px.scatter(
+        df,
+        x="Date",
+        y="Entity",
+        color="Event",
+        animation_frame="Year",
+        animation_group="Entity",
+        title="Animated Timeline of Events",
+        labels={"Date": "Event Date", "Entity": "Entity"}
+    )
+    fig.update_layout(transition={'duration': 500})
+    return fig
 
 # ------------------------------
 # Remote SPARQL Endpoint

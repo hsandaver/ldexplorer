@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """
-Linked Data Explorer - Enhanced with Modular Refactoring, Additional Features,
-Automated Testing, CI/CD Integration, and Performance Profiling
+Linked Data Explorer - Enhanced with Modular Refactoring, Automated Testing, CI/CD Integration, and Performance Profiling
 Author: Huw Sandaver w/ enhancements and suggestions by ChatGPT
-Version: 1.4.0+Refactored
+Version: 1.3.5+Refactored
 Date: 2025-02-16
 """
 
@@ -30,10 +29,6 @@ import networkx as nx
 import pandas as pd
 import plotly.express as px
 
-# Additional imports for new features
-import matplotlib.pyplot as plt
-from io import BytesIO
-
 # Optional streamlit-ace import for SPARQL syntax highlighting
 try:
     from streamlit_ace import st_ace
@@ -41,8 +36,8 @@ try:
 except ImportError:
     ace_installed = False
 
+# Performance profiling decorator to log execution time for key functions
 def profile_time(func):
-    """Decorator to profile execution time of functions."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -124,7 +119,6 @@ def log_error(message: str) -> None:
     logging.error(message)
 
 def remove_fragment(uri: str) -> str:
-    """Remove URL fragment if present."""
     try:
         parsed = urlparse(uri)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ''))
@@ -152,17 +146,14 @@ def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     return None
 
 def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize JSON data representing an entity.
-    - Removes fragments from IDs.
-    - Ensures prefLabel and type fields exist.
-    - Normalizes relationship values.
-    """
+    # Ensure required fields exist
     if 'id' not in data or not data['id']:
         raise ValueError("Entity is missing an 'id'.")
     data['id'] = remove_fragment(data.get('id', ''))
+    # Set default prefLabel if missing
     if 'prefLabel' not in data or not isinstance(data['prefLabel'], dict) or 'en' not in data['prefLabel']:
         data['prefLabel'] = {'en': data.get('id', 'unknown')}
+    # Ensure 'type' is always a list
     if 'type' in data:
         data['type'] = data['type'] if isinstance(data['type'], list) else [data['type']]
     else:
@@ -186,14 +177,12 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 def is_valid_iiif_manifest(url: str) -> bool:
-    """Check if the provided URL is a valid IIIF manifest URL."""
     if not url.startswith("http"):
         return False
     lower_url = url.lower()
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
 
 def validate_entity(entity: Dict[str, Any]) -> List[str]:
-    """Validate required fields in the entity data."""
     errors = []
     if 'id' not in entity or not entity['id']:
         errors.append("Missing 'id'.")
@@ -202,7 +191,7 @@ def validate_entity(entity: Dict[str, Any]) -> List[str]:
     return errors
 
 def format_metadata(metadata: Dict[str, Any]) -> str:
-    """Format node metadata as a markdown bullet list with clickable links."""
+    """Formats node metadata as a markdown bullet list with clickable links."""
     formatted = ""
     for key, value in metadata.items():
         if key == 'prefLabel':
@@ -244,7 +233,7 @@ class GraphData:
     nodes: List[Node]
 
 # ------------------------------
-# Graph Processing Functions
+# Graph Processing
 # ------------------------------
 @st.cache_data(show_spinner=False)
 @profile_time
@@ -261,6 +250,7 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
             label: str = normalized['prefLabel']['en']
             entity_types: List[str] = normalized.get('type', ['Unknown'])
 
+            # Validate required schema
             validation_errors = validate_entity(normalized)
             if validation_errors:
                 errors.append(f"Entity '{subject_id}' errors: " + "; ".join(validation_errors))
@@ -294,7 +284,6 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
 
 @profile_time
 def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
-    """Convert internal graph data representation to an RDF graph."""
     g = RDFGraph()
     g.bind("ex", EX)
 
@@ -302,8 +291,12 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
         subject = URIRef(node.id)
         label = node.metadata.get("prefLabel", {}).get("en", node.id)
         g.add((subject, RDFS.label, Literal(label, lang="en")))
+
+        # Insert RDF types
         for t in node.types:
             g.add((subject, RDF.type, EX[t]))
+
+        # Insert other metadata
         for key, value in node.metadata.items():
             if key in ("id", "prefLabel", "type"):
                 continue
@@ -320,12 +313,14 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
                         g.add((subject, EX[key], Literal(v)))
                 else:
                     g.add((subject, EX[key], Literal(value)))
+
+        # Insert edges
         for edge in node.edges:
             g.add((subject, EX[edge.relationship], URIRef(edge.target)))
+
     return g
 
 def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
-    """Run a SPARQL SELECT query against the provided RDF graph."""
     result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
     return {str(row[0]) for row in result if row[0] is not None}
 
@@ -336,13 +331,17 @@ def compute_centrality_measures(graph_data: GraphData) -> Dict[str, Dict[str, fl
     Computes degree and betweenness centrality measures for nodes in the graph.
     """
     G = nx.DiGraph()
+
     for node in graph_data.nodes:
         G.add_node(node.id)
+
     for node in graph_data.nodes:
         for edge in node.edges:
             G.add_edge(edge.source, edge.target)
+
     degree = nx.degree_centrality(G)
     betweenness = nx.betweenness_centrality(G)
+
     centrality = {}
     for node in G.nodes():
         centrality[node] = {
@@ -361,7 +360,7 @@ def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> Li
     return relationships
 
 # ------------------------------
-# Remote SPARQL Endpoint Functions
+# Remote SPARQL Endpoint
 # ------------------------------
 def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str], List[str]]:
     errors = []
@@ -379,8 +378,10 @@ def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str],
             s = str(row.s)
             p = str(row.p)
             o = str(row.o)
+
             if s not in nodes_dict:
                 nodes_dict[s] = {"id": s, "prefLabel": {"en": s}, "type": ["Unknown"], "metadata": {}}
+
             if p in nodes_dict[s]["metadata"]:
                 if isinstance(nodes_dict[s]["metadata"][p], list):
                     nodes_dict[s]["metadata"][p].append(o)
@@ -388,6 +389,7 @@ def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str],
                     nodes_dict[s]["metadata"][p] = [nodes_dict[s]["metadata"][p], o]
             else:
                 nodes_dict[s]["metadata"][p] = o
+
             if p.endswith("label"):
                 nodes_dict[s]["prefLabel"] = {"en": o}
 
@@ -412,7 +414,7 @@ def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str],
     return graph_data, id_to_label, errors
 
 # ------------------------------
-# Graph Building Functions
+# Graph Building
 # ------------------------------
 def add_node(
     net: Network,
@@ -425,19 +427,24 @@ def add_node(
     show_labels: bool = True,
     custom_size: Optional[int] = None
 ) -> None:
-    """Helper to add a node to the pyvis network."""
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
     description = ""
+
     if "description" in metadata:
         if isinstance(metadata["description"], dict):
             description = metadata["description"].get("en", "")
         elif isinstance(metadata["description"], str):
             description = metadata["description"]
+
     if description:
         node_title += f"\nDescription: {description}"
+    
+    # Append annotation if available
     if "annotation" in metadata and metadata["annotation"]:
         node_title += f"\nAnnotation: {metadata['annotation']}"
+
     size = custom_size if custom_size is not None else (20 if (search_nodes and node_id in search_nodes) else 15)
+
     net.add_node(
         node_id,
         label=label if show_labels else "",
@@ -463,11 +470,11 @@ def add_edge(
     custom_width: Optional[int] = None,
     custom_color: Optional[str] = None
 ) -> None:
-    """Helper to add an edge to the pyvis network."""
     is_search_edge = search_nodes is not None and (src in search_nodes or dst in search_nodes)
     edge_color = custom_color if custom_color is not None else RELATIONSHIP_CONFIG.get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
     width = custom_width if custom_width is not None else (3 if is_search_edge else 2)
+
     net.add_edge(
         src,
         dst,
@@ -494,7 +501,6 @@ def build_graph(
     centrality: Optional[Dict[str, Dict[str, float]]] = None,
     path_nodes: Optional[List[str]] = None
 ) -> Network:
-    """Build and return a pyvis Network based on graph data and various settings."""
     net = Network(
         height="750px",
         width="100%",
@@ -503,30 +509,35 @@ def build_graph(
         bgcolor="#f0f2f6",
         font_color="#343a40"
     )
+
     net.force_atlas_2based(
         gravity=st.session_state.physics_params.get("gravity", -50),
         central_gravity=st.session_state.physics_params.get("centralGravity", 0.01),
         spring_length=st.session_state.physics_params.get("springLength", 150),
         spring_strength=st.session_state.physics_params.get("springStrength", 0.08)
     )
+
     added_nodes: Set[str] = set()
     edge_set: Set[Tuple[str, str, str]] = set()
     path_edge_set = set(zip(path_nodes, path_nodes[1:])) if path_nodes else set()
 
-    # Add nodes to the network
     for node in graph_data.nodes:
         if filtered_nodes is not None and node.id not in filtered_nodes:
             logging.debug(f"Skipping node {node.id} due to filtering")
             continue
+
         color = next(
             (NODE_TYPE_COLORS.get(t, DEFAULT_NODE_COLOR) for t in node.types),
             DEFAULT_NODE_COLOR
         )
+
         custom_size = None
         if centrality and node.id in centrality:
             custom_size = int(15 + centrality[node.id]["degree"] * 30)
+
         if path_nodes and node.id in path_nodes:
             custom_size = max(custom_size or 15, 25)
+
         if node.id not in added_nodes:
             add_node(
                 net,
@@ -541,7 +552,6 @@ def build_graph(
             )
             added_nodes.add(node.id)
 
-    # Add edges to the network
     for node in graph_data.nodes:
         for edge in node.edges:
             if edge.relationship not in selected_relationships:
@@ -549,6 +559,7 @@ def build_graph(
             if filtered_nodes is not None and (edge.source not in filtered_nodes or edge.target not in filtered_nodes):
                 logging.debug(f"Skipping edge {edge.source} --{edge.relationship}--> {edge.target} due to filtering")
                 continue
+
             if edge.target not in added_nodes:
                 target_label = id_to_label.get(edge.target, edge.target)
                 add_node(
@@ -562,6 +573,7 @@ def build_graph(
                     show_labels=show_labels
                 )
                 added_nodes.add(edge.target)
+
             if (edge.source, edge.target, edge.relationship) not in edge_set:
                 if path_nodes and (edge.source, edge.target) in path_edge_set:
                     custom_width = 4
@@ -569,6 +581,7 @@ def build_graph(
                 else:
                     custom_width = None
                     custom_color = None
+
                 add_edge(
                     net,
                     edge.source,
@@ -604,7 +617,7 @@ def build_graph(
             "smooth": {"type": "continuous"}
         },
         "physics": {
-            "enabled": True,
+            "enabled": False,
             "hierarchicalRepulsion": {
                 "centralGravity": 0,
                 "springLength": 230,
@@ -625,17 +638,6 @@ def build_graph(
     }
     net.options = default_options
 
-    # --- Apply manual node positioning if provided ---
-    if node_positions:
-        for node in net.nodes:
-            pos = node_positions.get(node.get("id"))
-            if pos:
-                node['x'] = pos['x']
-                node['y'] = pos['y']
-                node['fixed'] = True
-                node['physics'] = False
-
-    # --- Custom JS without dragEnd saving ---
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -648,24 +650,69 @@ def build_graph(
                   window.parent.postMessage({type: 'OPEN_MODAL', node: nodeId}, "*");
               }
           });
+          network.on("dragEnd", function(params) {
+              var positions = {};
+              network.body.data.nodes.forEach(function(node) {
+                  positions[node.id] = {x: node.x, y: node.y};
+              });
+              window.parent.postMessage({type: 'UPDATE_POSITIONS', positions: positions}, "*");
+          });
       }, 1000);
     </script>
     """
+
+    if node_positions:
+        for node in net.nodes:
+            pos = node_positions.get(node.get("id"))
+            if pos:
+                node['x'] = pos['x']
+                node['y'] = pos['y']
+                node['fixed'] = True
+                node['physics'] = False
+
+    if community_detection:
+        G = nx.Graph()
+        for node in net.nodes:
+            G.add_node(node["id"])
+        for edge in net.edges:
+            G.add_edge(edge["from"], edge["to"])
+        try:
+            communities = custom_community_detection(G, max_iter=20)
+            if communities:
+                community_colors = [
+                    "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+                    "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+                ]
+                community_map: Dict[str, str] = {}
+                for i, comm in enumerate(communities):
+                    for n in comm:
+                        community_map[n] = community_colors[i % len(community_colors)]
+                for node in net.nodes:
+                    if node["id"] in community_map:
+                        node["color"] = community_map[node["id"]]
+            else:
+                st.info("No communities detected.")
+        except Exception as e:
+            st.error(f"Community detection failed: {e}")
+
     net.html = net.generate_html() + custom_js
     return net
 
 def custom_community_detection(G: nx.Graph, max_iter: int = 5) -> List[Set[str]]:
     communities = list(nx.algorithms.community.greedy_modularity_communities(G))
     best_modularity = nx.algorithms.community.modularity(G, communities)
+
     for _ in range(max_iter):
         weak_nodes = set()
         new_communities = []
+
         for comm in communities:
             comm = set(comm)
             if len(comm) >= 3:
                 triangles = nx.triangles(G.subgraph(comm))
             else:
                 triangles = {v: 0 for v in comm}
+
             strong_nodes = set()
             for v in comm:
                 total_deg = G.degree(v)
@@ -679,24 +726,31 @@ def custom_community_detection(G: nx.Graph, max_iter: int = 5) -> List[Set[str]]
                     weak_nodes.add(v)
                 else:
                     strong_nodes.add(v)
+
             if strong_nodes:
                 new_communities.append(strong_nodes)
+
         if not weak_nodes:
             break
+
         G_mod = G.copy()
         G_mod.remove_nodes_from(weak_nodes)
+
         if len(G_mod.nodes()) > 0:
             mod_communities = list(nx.algorithms.community.greedy_modularity_communities(G_mod))
         else:
             mod_communities = []
+
         for w in weak_nodes:
             mod_communities.append({w})
+
         new_modularity = nx.algorithms.community.modularity(G, mod_communities)
         if new_modularity > best_modularity:
             best_modularity = new_modularity
             communities = mod_communities
         else:
             break
+
     return communities
 
 # ------------------------------
@@ -729,6 +783,7 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
                 nodes_dict[source][prop] = [nodes_dict[source][prop], triple]
         else:
             nodes_dict[source][prop] = triple
+
     return {
         "@context": {
             "label": "http://www.w3.org/2000/01/rdf-schema#label",
@@ -740,94 +795,56 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
         "@graph": list(nodes_dict.values())
     }
 
-@profile_time
-def export_graph_as_png(graph_data: GraphData) -> bytes:
-    """
-    Export the graph as a PNG image by converting the graph_data to a matplotlib plot.
-    """
-    G = nx.DiGraph()
-    for node in graph_data.nodes:
-        G.add_node(node.id, label=node.label)
-    for node in graph_data.nodes:
-        for edge in node.edges:
-            G.add_edge(edge.source, edge.target, label=edge.relationship)
-    pos = nx.spring_layout(G)
-    plt.figure(figsize=(10, 8))
-    nx.draw(G, pos, with_labels=True, node_color='skyblue', edge_color='gray', node_size=1500, font_size=10)
-    edge_labels = nx.get_edge_attributes(G, 'label')
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches="tight")
-    plt.close()
-    buf.seek(0)
-    return buf.getvalue()
-
 # ------------------------------
 # Streamlit UI (Main)
 # ------------------------------
 def main() -> None:
-    # Custom CSS with dark mode toggle support
-    dark_mode = st.sidebar.checkbox("Enable Dark Mode", value=False, key="dark_mode")
-    if dark_mode:
-        custom_css = """
-        <style>
-            .stApp {
-                max-width: 1600px;
-                padding: 1rem;
-                background-color: #2E2E2E;
-                color: #F0F0F0;
-            }
-            section[data-testid="stSidebar"] > div {
-                background-color: #424242;
-                padding: 1rem;
-            }
-            h1, h2, h3, h4, h5 {
-                color: #FFFFFF;
-            }
-            .stButton > button, .stDownloadButton > button {
-                background-color: #0056b3;
-                color: white;
-                border: none;
-                padding: 0.6rem 1.2rem;
-                border-radius: 0.3rem;
-                font-size: 1rem;
-                transition: background-color 0.3s ease;
-            }
-            .stButton > button:hover, .stDownloadButton > button:hover {
-                background-color: #003d80;
-            }
-        </style>
-        """
-    else:
-        custom_css = """
-        <style>
-            .stApp {
-                max-width: 1600px;
-                padding: 1rem;
-                background-color: #fafafa;
-                color: #343a40;
-            }
-            section[data-testid="stSidebar"] > div {
-                background-color: #f8f9fa;
-                padding: 1rem;
-            }
-            h1, h2, h3, h4, h5 {
-                color: #333;
-            }
-            .stButton > button, .stDownloadButton > button {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                padding: 0.6rem 1.2rem;
-                border-radius: 0.3rem;
-                font-size: 1rem;
-                transition: background-color 0.3s ease;
-            }
-            .stButton > button:hover, .stDownloadButton > button:hover {
-                background-color: #0056b3;
-            }
-        </style>
-        """
+    custom_css = """
+    <style>
+        .stApp {
+            max-width: 1600px;
+            padding: 1rem;
+            background-color: #fafafa;
+            color: #343a40;
+        }
+        section[data-testid="stSidebar"] > div {
+            background-color: #f8f9fa;
+            padding: 1rem;
+        }
+        h1, h2, h3, h4, h5 {
+            color: #333;
+        }
+        .stButton > button, .stDownloadButton > button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 0.3rem;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover {
+            background-color: #0056b3;
+        }
+        .css-1d391kg, .stTextInput, .stSelectbox, .stTextArea {
+            border-radius: 4px;
+        }
+        .stTextInput > label, .stSelectbox > label, .stTextArea > label {
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+        .stExpander > label {
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+        .stTabs [role="tab"] {
+            font-weight: 600;
+        }
+        header[data-testid="stHeader"] {
+            background: #f8f9fa;
+        }
+    </style>
+    """
     st.markdown(custom_css, unsafe_allow_html=True)
 
     st.title("Linked Data Explorer")
@@ -838,12 +855,12 @@ def main() -> None:
         st.write("2. Adjust visualization settings like physics, filtering, and (optionally) enable centrality measures.")
         st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes or load data from a remote SPARQL endpoint.")
         st.write("4. Explore the graph in the **Graph View** tab below!")
-        st.write("5. Drag nodes around – their positions can also be set manually using the sidebar!")
+        st.write("5. Manually set node positions using the sidebar.")
 
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
 
-    # Initialize session state variables
+    # Initialize session state
     if "node_positions" not in st.session_state:
         st.session_state.node_positions = {}
     if "selected_node" not in st.session_state:
@@ -974,6 +991,7 @@ def main() -> None:
             annotation_node = st.selectbox("Select Node", [n.id for n in st.session_state.graph_data.nodes], key="annotation_node")
             annotation_text = st.text_area("Annotation", value=st.session_state.annotations.get(annotation_node, ""), key="annotation_text")
             if st.button("Add Annotation"):
+                # Update the annotation in session state and in the node metadata
                 st.session_state.annotations[annotation_node] = annotation_text
                 for node in st.session_state.graph_data.nodes:
                     if node.id == annotation_node:
@@ -1119,20 +1137,6 @@ def main() -> None:
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[sel_node] = {"x": x_val, "y": y_val}
                     st.success(f"Position for '{unique_nodes[sel_node]}' set to (X: {x_val}, Y: {y_val})")
-        st.download_button(
-            "Download Node Positions Config",
-            data=json.dumps(st.session_state.node_positions, indent=2),
-            file_name="node_positions.json",
-            mime="application/json"
-        )
-        uploaded_config = st.file_uploader("Load Node Positions Config", type=["json"], key="node_positions_file")
-        if uploaded_config is not None:
-            try:
-                loaded_config = json.load(uploaded_config)
-                st.session_state.node_positions = loaded_config
-                st.success("Node positions config loaded!")
-            except Exception as e:
-                st.error("Failed to load config: " + str(e))
 
     with st.sidebar.expander("Advanced Filtering"):
         st.subheader("Property-based Filtering")
@@ -1191,6 +1195,7 @@ def main() -> None:
                     ]
                 else:
                     search_nodes = None
+
                 if st.session_state.property_filter["property"] and st.session_state.property_filter["value"]:
                     prop = st.session_state.property_filter["property"]
                     val = st.session_state.property_filter["value"].lower()
@@ -1212,14 +1217,21 @@ def main() -> None:
                     centrality=st.session_state.centrality_measures,
                     path_nodes=st.session_state.shortest_path
                 )
-            returned_positions = components.html(net.html, height=750, scrolling=True, key="graph_component")
-            if returned_positions:
-                try:
-                    st.session_state.node_positions = json.loads(returned_positions)
-                except Exception as e:
-                    st.error("Failed to parse node positions: " + str(e))
+
+            if community_detection:
+                st.info("Community detection applied to node colors.")
+            if len(net.nodes) > 50 and st.session_state.show_labels:
+                st.info("Graph has many nodes. Consider toggling 'Show Node Labels' off for better readability.")
+
+            try:
+                st.session_state.graph_html = net.html
+                components.html(net.html, height=750, scrolling=True)
+            except Exception as e:
+                st.error(f"Graph generation failed: {e}")
+
             st.markdown(create_legends(RELATIONSHIP_CONFIG, NODE_TYPE_COLORS), unsafe_allow_html=True)
             st.markdown(f"**Total Nodes:** {len(net.nodes)} | **Total Edges:** {len(net.edges)}")
+
             st.markdown("#### Node Metadata")
             if st.session_state.selected_node:
                 node_obj = next((n for n in st.session_state.graph_data.nodes if n.id == st.session_state.selected_node), None)
@@ -1299,6 +1311,7 @@ def main() -> None:
     <div id="mirador-viewer" style="height: 600px;"></div>
     <script>
       var manifestUrl = {json.dumps(manifest_url)};
+      console.log("Manifest URL:", manifestUrl);
       Mirador.viewer({{
         id: 'mirador-viewer',
         windows: [{{ loadedManifest: manifestUrl }}]
@@ -1349,14 +1362,7 @@ def main() -> None:
                     file_name="graph_data.jsonld",
                     mime="application/ld+json"
                 )
-                if st.session_state.graph_data.nodes:
-                    png_data = export_graph_as_png(st.session_state.graph_data)
-                    st.download_button(
-                        "Download Graph as PNG",
-                        data=png_data,
-                        file_name="network_graph.png",
-                        mime="image/png"
-                    )
+
         else:
             st.info("No valid data found. Please check your JSON files.")
 
@@ -1384,6 +1390,7 @@ def main() -> None:
     with tabs[2]:
         st.header("Centrality Measures")
         if st.session_state.centrality_measures:
+            # Convert centrality measures dict to a pandas DataFrame
             centrality_df = pd.DataFrame.from_dict(st.session_state.centrality_measures, orient='index')
             centrality_df = centrality_df.reset_index().rename(columns={"index": "Node ID"})
             st.dataframe(centrality_df)
@@ -1407,6 +1414,7 @@ def main() -> None:
 
     with tabs[4]:
         st.header("Timeline View")
+        # Static timeline implementation
         timeline_data = []
         for n in st.session_state.graph_data.nodes:
             dob = n.metadata.get("dateOfBirth")
@@ -1479,9 +1487,9 @@ def main() -> None:
             - **Advanced Filtering:** Filter nodes by properties, relationship types, and node types.
             - **Pathfinding:** Find and visually highlight the shortest path between nodes.
             - **Node Annotations:** Add custom annotations to nodes.
-            - **Export Options:** Download the graph as HTML, JSON‑LD, CSV, or PNG.
+            - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Version:** 1.4.0+Refactored  
+            **Version:** 1.3.5+Refactored  
             **Author:** Huw Sandaver w/ enhancements and suggestions by ChatGPT  
             **Contact:** hsandaver@alumni.unimelb.edu.au
             

@@ -1160,7 +1160,7 @@ def main() -> None:
         else:
             st.info("No nodes available for pathfinding.")
 
-    tabs = st.tabs(["Graph View", "Data View", "SPARQL Query", "Timeline", "About"])
+    tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "About"])
 
     with tabs[0]:
         st.header("Network Graph")
@@ -1366,6 +1366,18 @@ def main() -> None:
             st.info("No data available. Please upload JSON files.")
     
     with tabs[2]:
+        st.header("Centrality Measures")
+        if st.session_state.centrality_measures:
+            # Convert centrality measures dict to a pandas DataFrame
+            centrality_df = pd.DataFrame.from_dict(st.session_state.centrality_measures, orient='index')
+            centrality_df = centrality_df.reset_index().rename(columns={"index": "Node ID"})
+            st.dataframe(centrality_df)
+            csv_data = centrality_df.to_csv(index=False).encode('utf-8')
+            st.download_button("Download Centrality Measures as CSV", data=csv_data, file_name="centrality_measures.csv", mime="text/csv")
+        else:
+            st.info("Centrality measures have not been computed yet. Please enable 'Display Centrality Measures' in the visualization settings.")
+    
+    with tabs[3]:
         st.header("SPARQL Query")
         st.markdown("Enter a SPARQL SELECT query in the sidebar and view the results here.")
         if st.session_state.sparql_query.strip():
@@ -1378,7 +1390,7 @@ def main() -> None:
         else:
             st.info("No query entered.")
 
-    with tabs[3]:
+    with tabs[4]:
         st.header("Timeline View")
         timeline_data = []
         for n in st.session_state.graph_data.nodes:
@@ -1435,7 +1447,7 @@ def main() -> None:
         else:
             st.info("No timeline data available.")
 
-    with tabs[4]:
+    with tabs[5]:
         st.header("About Linked Data Explorer")
         st.markdown(
             """
@@ -1445,7 +1457,7 @@ def main() -> None:
             and edit the graph directly.
             
             **Features:**
-            - **Tabbed Interface:** Separate views for the graph, raw data, SPARQL queries, timeline, and about information.
+            - **Tabbed Interface:** Separate views for the graph, raw data, centrality measures, SPARQL queries, timeline, and about information.
             - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning, centrality measures, and optional community detection.
             - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).

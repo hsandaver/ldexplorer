@@ -513,6 +513,7 @@ def build_graph(
     edge_set: Set[Tuple[str, str, str]] = set()
     path_edge_set = set(zip(path_nodes, path_nodes[1:])) if path_nodes else set()
 
+    # Add nodes to the network
     for node in graph_data.nodes:
         if filtered_nodes is not None and node.id not in filtered_nodes:
             logging.debug(f"Skipping node {node.id} due to filtering")
@@ -540,6 +541,7 @@ def build_graph(
             )
             added_nodes.add(node.id)
 
+    # Add edges to the network
     for node in graph_data.nodes:
         for edge in node.edges:
             if edge.relationship not in selected_relationships:
@@ -602,7 +604,7 @@ def build_graph(
             "smooth": {"type": "continuous"}
         },
         "physics": {
-            "enabled": False,
+            "enabled": True,
             "hierarchicalRepulsion": {
                 "centralGravity": 0,
                 "springLength": 230,
@@ -623,7 +625,17 @@ def build_graph(
     }
     net.options = default_options
 
-    # --- Custom JS to capture drag events ---
+    # --- Apply manual node positioning if provided ---
+    if node_positions:
+        for node in net.nodes:
+            pos = node_positions.get(node.get("id"))
+            if pos:
+                node['x'] = pos['x']
+                node['y'] = pos['y']
+                node['fixed'] = True
+                node['physics'] = False
+
+    # --- Custom JS without dragEnd saving ---
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -636,50 +648,9 @@ def build_graph(
                   window.parent.postMessage({type: 'OPEN_MODAL', node: nodeId}, "*");
               }
           });
-          network.on("dragEnd", function(params) {
-              var positions = {};
-              network.body.data.nodes.forEach(function(node) {
-                  positions[node.id] = {x: node.x, y: node.y};
-              });
-              Streamlit.setComponentValue(JSON.stringify(positions));
-          });
       }, 1000);
     </script>
     """
-    if node_positions:
-        for node in net.nodes:
-            pos = node_positions.get(node.get("id"))
-            if pos:
-                node['x'] = pos['x']
-                node['y'] = pos['y']
-                node['fixed'] = True
-                node['physics'] = False
-
-    if community_detection:
-        G = nx.Graph()
-        for node in net.nodes:
-            G.add_node(node["id"])
-        for edge in net.edges:
-            G.add_edge(edge["from"], edge["to"])
-        try:
-            communities = custom_community_detection(G, max_iter=20)
-            if communities:
-                community_colors = [
-                    "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-                    "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
-                ]
-                community_map: Dict[str, str] = {}
-                for i, comm in enumerate(communities):
-                    for n in comm:
-                        community_map[n] = community_colors[i % len(community_colors)]
-                for node in net.nodes:
-                    if node["id"] in community_map:
-                        node["color"] = community_map[node["id"]]
-            else:
-                st.info("No communities detected.")
-        except Exception as e:
-            st.error(f"Community detection failed: {e}")
-
     net.html = net.generate_html() + custom_js
     return net
 
@@ -867,7 +838,7 @@ def main() -> None:
         st.write("2. Adjust visualization settings like physics, filtering, and (optionally) enable centrality measures.")
         st.write("3. (Optional) Run SPARQL queries to narrow down specific nodes or load data from a remote SPARQL endpoint.")
         st.write("4. Explore the graph in the **Graph View** tab below!")
-        st.write("5. Drag nodes around – their positions will be automatically saved! You can also download/upload the positions config.")
+        st.write("5. Drag nodes around – their positions can also be set manually using the sidebar!")
 
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
@@ -1229,7 +1200,6 @@ def main() -> None:
                     }
                     filtered_nodes = filtered_nodes.intersection(prop_nodes) if filtered_nodes is not None else prop_nodes
 
-                    # Build the network graph
                 net = build_graph(
                     graph_data=st.session_state.graph_data,
                     id_to_label=st.session_state.id_to_label,
@@ -1242,7 +1212,6 @@ def main() -> None:
                     centrality=st.session_state.centrality_measures,
                     path_nodes=st.session_state.shortest_path
                 )
-            # Use the pre-generated HTML from build_graph (which already includes custom_js)
             returned_positions = components.html(net.html, height=750, scrolling=True, key="graph_component")
             if returned_positions:
                 try:

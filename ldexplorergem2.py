@@ -1313,7 +1313,7 @@ def main() -> None:
                 path_text = re.sub(r'[^\x20-\x7E]+', '', path_text)
                 if len(path_text) > 1000:
                     path_text = path_text[:1000] + "... [truncated]"
-                st.text_area("Shortest Path", value=path_text, height=50)
+                st.text_area("Shortest Path", value=path_text, height=100)
                 rel_text = ""
                 for i in range(len(path_list) - 1):
                     rels = get_edge_relationship(path_list[i], path_list[i+1], st.session_state.graph_data)
@@ -1322,7 +1322,7 @@ def main() -> None:
                 rel_text = re.sub(r'[^\x20-\x7E]+', '', rel_text)
                 if len(rel_text) > 1000:
                     rel_text = rel_text[:1000] + "... [truncated]"
-                st.text_area("Path Relationships", value=rel_text, height=50)
+                st.text_area("Path Relationships", value=rel_text, height=100)
 
             with st.expander("Export Options", expanded=True):
                 if "graph_html" in st.session_state:

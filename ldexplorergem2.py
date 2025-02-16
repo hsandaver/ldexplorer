@@ -2,7 +2,7 @@
 """
 Linked Data Explorer - Refactored for Scientific Rigor
 Author: Huw Sandaver (Refactored by ChatGPT)
-Version: 2.0.0
+Version: 2.0.1
 Date: 2025-02-16
 
 Description:
@@ -753,6 +753,33 @@ def build_graph(
         }
     }
     net.options = default_options
+
+    # --- Updated Community Detection Block ---
+    if community_detection:
+        # Build an undirected graph from pyvis nodes for community detection.
+        G_comm = nx.Graph()
+        for node in net.nodes:
+            if "id" in node:
+                G_comm.add_node(node["id"])
+        for edge in net.edges:
+            if "from" in edge and "to" in edge:
+                G_comm.add_edge(edge["from"], edge["to"])
+        if louvain_installed:
+            partition = detect_communities_louvain(G_comm)
+            logging.info(f"Community partition: {partition}")
+            community_colors = [
+                "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+                "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
+            ]
+            # Update node colors based on community assignment.
+            for node in net.nodes:
+                node_id = node.get("id")
+                if node_id in partition:
+                    node["color"] = community_colors[partition[node_id] % len(community_colors)]
+        else:
+            st.info("Louvain community detection not available.")
+    # --- End Updated Community Detection Block ---
+
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -783,27 +810,7 @@ def build_graph(
                 node['y'] = pos['y']
                 node['fixed'] = True
                 node['physics'] = False
-    if community_detection:
-        G = nx.Graph()
-        for node in net.nodes:
-            G.add_node(node["id"])
-        for edge in net.edges:
-            G.add_edge(edge["from"], edge["to"])
-        community_map = {}
-        if louvain_installed:
-            partition = detect_communities_louvain(G)
-            community_colors = [
-                "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
-                "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe"
-            ]
-            for n, comm in partition.items():
-                community_map[n] = community_colors[comm % len(community_colors)]
-            for node in net.nodes:
-                if node["id"] in community_map:
-                    node["color"] = community_map[node["id"]]
-        else:
-            st.info("Louvain community detection not available.")
-    
+
     net.html = net.generate_html() + custom_js
     return net
 
@@ -1228,7 +1235,6 @@ def main() -> None:
         filter_by_type = {n.id for n in st.session_state.graph_data.nodes if any(t in st.session_state.filtered_types for t in n.types)}
         filtered_nodes = filtered_nodes.intersection(filter_by_type) if filtered_nodes is not None else filter_by_type
     
-    # Main Tabs for Visualization and Data Views
     tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "About"])
     with tabs[0]:
         st.header("Network Graph")
@@ -1480,7 +1486,7 @@ def main() -> None:
             - **Node Annotations:** Add custom annotations to nodes.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             
-            **Version:** 2.0.0  
+            **Version:** 2.0.1  
             **Author:** Huw Sandaver (Refactored by ChatGPT)  
             **Contact:** hsandaver@alumni.unimelb.edu.au
             

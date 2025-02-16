@@ -849,8 +849,7 @@ def main() -> None:
         st.session_state.modal_action = None
     if "modal_node" not in st.session_state:
         st.session_state.modal_node = None
-    if "centrality_enabled" not in st.session_state:
-        st.session_state.centrality_enabled = False
+    # We remove the direct assignment for centrality, replaced with a local variable below
     if "centrality_measures" not in st.session_state:
         st.session_state.centrality_measures = None
     if "shortest_path" not in st.session_state:
@@ -943,9 +942,15 @@ def main() -> None:
                 step=0.01,
                 key="springStrength_input"
             )
-        # Toggle centrality measures display
-        st.session_state.centrality_enabled = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
-        if st.session_state.centrality_enabled and st.session_state.graph_data.nodes:
+
+        # Here is the FIX: we do NOT reassign st.session_state["centrality_enabled"] 
+        # to the checkbox. We just read it from the checkbox into a local variable.
+        enable_centrality = st.checkbox(
+            "Display Centrality Measures", 
+            value=False, 
+            key="centrality_enabled"
+        )
+        if enable_centrality and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")
 
@@ -1090,7 +1095,7 @@ def main() -> None:
         selected_rels = st.multiselect("Select Relationship Types", options=sorted(list(unique_rels)), default=list(unique_rels))
         st.session_state.selected_relationships = selected_rels if selected_rels else list(RELATIONSHIP_CONFIG.keys())
         
-        # Node Type Filtering (FIX APPLIED HERE)
+        # Node Type Filtering
         st.subheader("Filter by Node Type")
         unique_types = sorted({t for node in st.session_state.graph_data.nodes for t in node.types})
         selected_types = st.multiselect("Select Node Types", options=unique_types, default=unique_types, key="filter_node_types")
@@ -1118,7 +1123,7 @@ def main() -> None:
     # If node types are selected, filter by those
     if st.session_state.filtered_types:
         filtered_by_type = {
-            node.id 
+            node.id
             for node in st.session_state.graph_data.nodes
             if any(t in st.session_state.filtered_types for t in node.types)
         }
@@ -1153,7 +1158,6 @@ def main() -> None:
         st.header("Network Graph")
         if st.session_state.graph_data.nodes:
             with st.spinner("Generating Network Graph..."):
-                # If there's a search term, get matching nodes
                 search_nodes = [node.id for node in st.session_state.graph_data.nodes 
                                 if st.session_state.search_term.lower() in node.label.lower()] \
                                if st.session_state.search_term.strip() else None
@@ -1431,7 +1435,7 @@ def main() -> None:
             - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
             - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).
             - **IIIF Viewer:** View IIIF manifests for applicable entities.
-            - **Advanced Filtering:** Filter nodes by properties, relationship types, **and** node types!
+            - **Advanced Filtering:** Filter nodes by properties, relationship types, and node types.
             - **Pathfinding:** Find and visually highlight the shortest path between nodes.
             - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
             

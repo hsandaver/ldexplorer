@@ -944,7 +944,7 @@ def main() -> None:
                 key="springStrength_input"
             )
         # Toggle centrality measures display
-        st.session_state.centrality_enabled = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
+        centrality_enabled = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
         if st.session_state.centrality_enabled and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")

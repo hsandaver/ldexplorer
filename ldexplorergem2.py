@@ -438,6 +438,10 @@ def add_node(
 
     if description:
         node_title += f"\nDescription: {description}"
+    
+    # Append annotation if available
+    if "annotation" in metadata and metadata["annotation"]:
+        node_title += f"\nAnnotation: {metadata['annotation']}"
 
     size = custom_size if custom_size is not None else (20 if (search_nodes and node_id in search_nodes) else 15)
 
@@ -894,6 +898,8 @@ def main() -> None:
         st.session_state.shortest_path = None
     if "property_filter" not in st.session_state:
         st.session_state.property_filter = {"property": "", "value": ""}
+    if "annotations" not in st.session_state:
+        st.session_state.annotations = {}  # key: node id, value: annotation text
 
     # ---------------- Sidebar
     with st.sidebar.expander("File Upload"):
@@ -978,6 +984,22 @@ def main() -> None:
         if enable_centrality and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")
+
+    with st.sidebar.expander("Node Annotations"):
+        st.write("Select a node and add your annotation below:")
+        if st.session_state.graph_data.nodes:
+            annotation_node = st.selectbox("Select Node", [n.id for n in st.session_state.graph_data.nodes], key="annotation_node")
+            annotation_text = st.text_area("Annotation", value=st.session_state.annotations.get(annotation_node, ""), key="annotation_text")
+            if st.button("Add Annotation"):
+                # Update the annotation in session state and in the node metadata
+                st.session_state.annotations[annotation_node] = annotation_text
+                for node in st.session_state.graph_data.nodes:
+                    if node.id == annotation_node:
+                        node.metadata["annotation"] = annotation_text
+                        st.success(f"Annotation added to node {annotation_node}.")
+                        break
+        else:
+            st.info("No nodes available for annotation.")
 
     with st.sidebar.expander("Graph Editing"):
         ge_tabs = st.tabs(["Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"])
@@ -1138,27 +1160,6 @@ def main() -> None:
             n.id for n in st.session_state.graph_data.nodes if any(t in st.session_state.filtered_types for t in n.types)
         }
         filtered_nodes = filtered_nodes.intersection(filter_by_type) if filtered_nodes is not None else filter_by_type
-
-    with st.sidebar.expander("Graph Pathfinding"):
-        if st.session_state.graph_data.nodes:
-            source_pf = st.selectbox("Source Node", [n.id for n in st.session_state.graph_data.nodes], key="pf_source")
-            target_pf = st.selectbox("Target Node", [n.id for n in st.session_state.graph_data.nodes], key="pf_target")
-            if st.button("Find Shortest Path"):
-                try:
-                    G_pf = nx.DiGraph()
-                    for n in st.session_state.graph_data.nodes:
-                        G_pf.add_node(n.id)
-                    for n in st.session_state.graph_data.nodes:
-                        for e in n.edges:
-                            G_pf.add_edge(e.source, e.target)
-                    sp = nx.shortest_path(G_pf, source=source_pf, target=target_pf)
-                    st.session_state.shortest_path = sp
-                    st.success(f"Shortest path found with {len(sp)-1} edges.")
-                except Exception as e:
-                    st.session_state.shortest_path = None
-                    st.error(f"Pathfinding failed: {e}")
-        else:
-            st.info("No nodes available for pathfinding.")
 
     tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "About"])
 
@@ -1374,13 +1375,6 @@ def main() -> None:
             st.dataframe(centrality_df)
             csv_data = centrality_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Centrality Measures as CSV", data=csv_data, file_name="centrality_measures.csv", mime="text/csv")
-            
-            # Generate a heatmap of centrality measures
-            heatmap_df = centrality_df.set_index("Node ID")
-            fig_heatmap = px.imshow(heatmap_df, text_auto=True, aspect="auto",
-                                    title="Heatmap of Centrality Measures",
-                                    labels=dict(x="Centrality Metric", y="Node ID", color="Value"))
-            st.plotly_chart(fig_heatmap, use_container_width=True)
         else:
             st.info("Centrality measures have not been computed yet. Please enable 'Display Centrality Measures' in the visualization settings.")
     

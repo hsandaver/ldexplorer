@@ -103,7 +103,7 @@ EX = Namespace("http://example.org/")  # Custom RDF namespace
 # -----------------------------------------------------------------------------
 # Custom Community Detection Function with Disassembly Strategy
 # -----------------------------------------------------------------------------
-def custom_community_detection(G: nx.Graph, max_iter: int = 5) -> List[Set[str]]:
+def custom_community_detection(G: nx.Graph, max_iter: int = 20) -> List[Set[str]]:
     """
     Runs the greedy modularity community detection iteratively.
     In each iteration, it identifies 'weak' nodes based on two criteria:

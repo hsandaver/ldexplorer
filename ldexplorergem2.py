@@ -1241,7 +1241,8 @@ def main() -> None:
                     centrality=st.session_state.centrality_measures,
                     path_nodes=st.session_state.shortest_path
                 )
-            returned_positions = components.html(net.html, height=750, scrolling=True, key="graph_component")
+            html_content = str(net.generate_html() + custom_js)
+            returned_positions = components.html(html_content, height=750, scrolling=True, key="graph_component")
             if returned_positions:
                 try:
                     st.session_state.node_positions = json.loads(returned_positions)

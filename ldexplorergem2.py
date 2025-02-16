@@ -1374,6 +1374,13 @@ def main() -> None:
             st.dataframe(centrality_df)
             csv_data = centrality_df.to_csv(index=False).encode('utf-8')
             st.download_button("Download Centrality Measures as CSV", data=csv_data, file_name="centrality_measures.csv", mime="text/csv")
+            
+            # Generate a heatmap of centrality measures
+            heatmap_df = centrality_df.set_index("Node ID")
+            fig_heatmap = px.imshow(heatmap_df, text_auto=True, aspect="auto",
+                                    title="Heatmap of Centrality Measures",
+                                    labels=dict(x="Centrality Metric", y="Node ID", color="Value"))
+            st.plotly_chart(fig_heatmap, use_container_width=True)
         else:
             st.info("Centrality measures have not been computed yet. Please enable 'Display Centrality Measures' in the visualization settings.")
     

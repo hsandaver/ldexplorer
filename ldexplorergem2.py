@@ -990,7 +990,7 @@ def main() -> None:
                     selected_relationships=st.session_state.selected_relationships,
                     search_node=next(
                         (node.id for node in st.session_state.graph_data.nodes 
-                         if node.label.lower() == st.session_state.search_term.lower()),
+                         if node.label.lower() in node.label.lower()),
                         None
                     ),
                     node_positions=st.session_state.node_positions,

@@ -19,6 +19,8 @@ from urllib.parse import urlparse, urlunparse
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
+import re  # <-- We'll use this to sanitize the path text in case of weird characters
+
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
@@ -634,7 +636,7 @@ def build_graph(
                 node['fixed'] = True
                 node['physics'] = False
 
-    # Community Detection: update node colors based on detected communities
+    # Community Detection
     if community_detection:
         G = nx.Graph()
         for node in net.nodes:
@@ -849,7 +851,6 @@ def main() -> None:
         st.session_state.modal_action = None
     if "modal_node" not in st.session_state:
         st.session_state.modal_node = None
-    # We remove the direct assignment for centrality, replaced with a local variable below
     if "centrality_measures" not in st.session_state:
         st.session_state.centrality_measures = None
     if "shortest_path" not in st.session_state:
@@ -943,13 +944,8 @@ def main() -> None:
                 key="springStrength_input"
             )
 
-        # Here is the FIX: we do NOT reassign st.session_state["centrality_enabled"] 
-        # to the checkbox. We just read it from the checkbox into a local variable.
-        enable_centrality = st.checkbox(
-            "Display Centrality Measures", 
-            value=False, 
-            key="centrality_enabled"
-        )
+        # We'll avoid reassigning to session_state and just use a local variable:
+        enable_centrality = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
         if enable_centrality and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")
@@ -1204,6 +1200,7 @@ def main() -> None:
                 node_obj = next((node for node in st.session_state.graph_data.nodes if node.id == st.session_state.selected_node), None)
                 if node_obj:
                     md_content = f"**Label:** {st.session_state.id_to_label.get(node_obj.id, node_obj.id)}\n\n"
+                    # If centrality measures exist, show them
                     if st.session_state.centrality_measures and node_obj.id in st.session_state.centrality_measures:
                         cent = st.session_state.centrality_measures[node_obj.id]
                         md_content += f"- **Degree Centrality:** {cent['degree']:.3f}\n"
@@ -1299,14 +1296,24 @@ def main() -> None:
             if st.session_state.shortest_path:
                 st.subheader("Shortest Path Details")
                 path = st.session_state.shortest_path
+                # Construct a user-friendly path text
                 path_text = " → ".join([st.session_state.id_to_label.get(n, n) for n in path])
+                # Remove weird control chars & truncate if it's huge
+                path_text = re.sub(r'[^\x20-\x7E]+', '', path_text)
+                if len(path_text) > 1000:
+                    path_text = path_text[:1000] + "... [truncated]"
                 st.text_area("Shortest Path", value=path_text, height=50)
-                # Optionally, list relationship types along the path
+
+                # Optionally, list the relationships along that path
                 rel_text = ""
-                for i in range(len(path)-1):
+                for i in range(len(path) - 1):
                     rels = get_edge_relationship(path[i], path[i+1], st.session_state.graph_data)
                     rel_text += f"{st.session_state.id_to_label.get(path[i], path[i])} -- {', '.join(rels)} --> "
                 rel_text += st.session_state.id_to_label.get(path[-1], path[-1])
+
+                rel_text = re.sub(r'[^\x20-\x7E]+', '', rel_text)
+                if len(rel_text) > 1000:
+                    rel_text = rel_text[:1000] + "... [truncated]"
                 st.text_area("Path Relationships", value=rel_text, height=50)
             
             with st.expander("Export Options", expanded=True):

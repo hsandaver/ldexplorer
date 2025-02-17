@@ -10,3 +10,4 @@ python-louvain
 streamlit-ace
 pyshacl
 owlrl
+scipy

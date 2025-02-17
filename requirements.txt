@@ -1,9 +1,12 @@
-streamlit-ace
+streamlit
 pyvis
 rdflib
 networkx
 pandas
-plotly
+requests
 python-dateutil
+plotly
 python-louvain
-scipy
+streamlit-ace
+pyshacl
+owlrl

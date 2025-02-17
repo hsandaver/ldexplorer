@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 """
-Linked Data Explorer - Refactored for Scientific Rigor
+Linked Data Explorer - Refactored for Scientific Rigor with Enhanced Linked Data Features
 Author: Huw Sandaver (Refactored by ChatGPT)
-Version: 2.0.1
-Date: 2025-02-16
+Version: 2.1.0
+Date: 2025-02-17
 
 Description:
 This code implements a modular, robust, and reproducible pipeline for exploring linked data as a network.
-It includes enhanced data normalization (with temporal and spatial parsing), additional network metrics,
-community detection using the Louvain algorithm, and comprehensive documentation for reproducibility.
+It includes enhanced data ingestion (support for RDF formats, SHACL validation, URI dereferencing),
+basic RDF reasoning, ontology suggestions, schema mapping stubs, advanced SPARQL querying, and enriched graph
+visualization with semantic styling.
 """
 
 # ------------------------------
@@ -32,12 +33,13 @@ from rdflib import Graph as RDFGraph, URIRef, Literal, Namespace
 from rdflib.namespace import RDF, RDFS
 import networkx as nx
 import pandas as pd
-import plotly.express as px
+import requests
 from dateutil.parser import parse as parse_date
+import plotly.express as px  # Added Plotly Express import
 
-# Third-party community detection (Louvain)
+# Optional community detection (Louvain)
 try:
-    import community as community_louvain
+    import community.community_louvain as community_louvain
     louvain_installed = True
 except ImportError:
     louvain_installed = False
@@ -48,6 +50,18 @@ try:
     ace_installed = True
 except ImportError:
     ace_installed = False
+
+# Optional SHACL validation and reasoning libraries
+try:
+    from pyshacl import validate
+    pyshacl_installed = True
+except ImportError:
+    pyshacl_installed = False
+try:
+    from owlrl import DeductiveClosure, RDFS_Semantics
+    owlrl_installed = True
+except ImportError:
+    owlrl_installed = False
 
 # ------------------------------
 # Configuration and Constants
@@ -124,12 +138,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # Performance Profiling Decorator
 # ------------------------------
 def profile_time(func):
-    """
-    Decorator to profile execution time of a function.
-    
-    Returns:
-        The wrapped function's output.
-    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -143,23 +151,9 @@ def profile_time(func):
 # Utility Functions
 # ------------------------------
 def log_error(message: str) -> None:
-    """Log an error message."""
     logging.error(message)
 
 def remove_fragment(uri: str) -> str:
-    """
-    Remove the fragment part from a URI.
-    
-    Parameters
-    ----------
-    uri : str
-        The URI to process.
-    
-    Returns
-    -------
-    str
-        URI without the fragment.
-    """
     try:
         parsed = urlparse(uri)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ''))
@@ -168,21 +162,6 @@ def remove_fragment(uri: str) -> str:
         return uri
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
-    """
-    Normalize relationship value from a dict or string.
-    
-    Parameters
-    ----------
-    rel : str
-        Relationship type.
-    value : Any
-        Value to be normalized.
-    
-    Returns
-    -------
-    Optional[str]
-        Normalized relationship identifier.
-    """
     if isinstance(value, dict):
         if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner"}:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
@@ -199,36 +178,15 @@ def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     return None
 
 def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize and validate raw entity data.
-    
-    Parameters
-    ----------
-    data : dict
-        Raw data representing an entity.
-    
-    Returns
-    -------
-    dict
-        Normalized data with parsed temporal fields.
-    
-    Raises
-    ------
-    ValueError
-        If the essential 'id' field is missing.
-    """
     if 'id' not in data or not data['id']:
         raise ValueError("Entity is missing an 'id'.")
     data['id'] = remove_fragment(data.get('id', ''))
-    # Set default prefLabel if missing or empty
     if 'prefLabel' not in data or not isinstance(data['prefLabel'], dict) or not data['prefLabel'].get('en', '').strip():
         data['prefLabel'] = {'en': data.get('id', 'unknown')}
-    # Ensure 'type' is always a list
     if 'type' in data:
         data['type'] = data['type'] if isinstance(data['type'], list) else [data['type']]
     else:
         data['type'] = ["Unknown"]
-    # Parse temporal fields using dateutil
     for time_field in ['dateOfBirth', 'dateOfDeath']:
         if time_field in data:
             try:
@@ -238,7 +196,6 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
                     data[time_field] = [{"time:inXSDDateTimeStamp": {"@value": parse_date(data[time_field]).isoformat()}}]
             except Exception as e:
                 log_error(f"Error parsing {time_field} for {data['id']}: {e}")
-    # Process relationship fields
     for rel in list(data.keys()):
         if rel not in CONFIG["RELATIONSHIP_CONFIG"]:
             continue
@@ -257,38 +214,12 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 def is_valid_iiif_manifest(url: str) -> bool:
-    """
-    Validate if a URL corresponds to an IIIF manifest.
-    
-    Parameters
-    ----------
-    url : str
-        URL to be validated.
-    
-    Returns
-    -------
-    bool
-        True if valid, otherwise False.
-    """
     if not url.startswith("http"):
         return False
     lower_url = url.lower()
     return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
 
 def validate_entity(entity: Dict[str, Any]) -> List[str]:
-    """
-    Validate an entity for essential fields.
-    
-    Parameters
-    ----------
-    entity : dict
-        Normalized entity data.
-    
-    Returns
-    -------
-    list of str
-        List of validation error messages.
-    """
     errors = []
     if 'id' not in entity or not entity['id'].strip():
         errors.append("Missing 'id'.")
@@ -297,19 +228,6 @@ def validate_entity(entity: Dict[str, Any]) -> List[str]:
     return errors
 
 def format_metadata(metadata: Dict[str, Any]) -> str:
-    """
-    Format metadata into a markdown string.
-    
-    Parameters
-    ----------
-    metadata : dict
-        Metadata to be formatted.
-    
-    Returns
-    -------
-    str
-        Markdown formatted metadata.
-    """
     formatted = ""
     for key, value in metadata.items():
         if key == 'prefLabel':
@@ -328,6 +246,141 @@ def format_metadata(metadata: Dict[str, Any]) -> str:
             formatted += str(value)
         formatted += "\n"
     return formatted
+
+# ------------------------------
+# New Functions for RDF Ingestion and Validation
+# ------------------------------
+def parse_rdf_data(content: str, file_extension: str) -> RDFGraph:
+    """
+    Parse RDF data from a string based on file extension.
+    Supported formats: Turtle (.ttl), RDF/XML (.rdf), N-Triples (.nt).
+    """
+    rdf_graph = RDFGraph()
+    fmt = None
+    if file_extension == "ttl":
+        fmt = "turtle"
+    elif file_extension == "rdf":
+        fmt = "xml"
+    elif file_extension == "nt":
+        fmt = "nt"
+    else:
+        raise ValueError("Unsupported RDF format.")
+    rdf_graph.parse(data=content, format=fmt)
+    return rdf_graph
+
+def process_uploaded_file(uploaded_file) -> Tuple[List[RDFGraph], List[str]]:
+    """
+    Process an uploaded file which might contain JSON, JSON-LD, Turtle, RDF/XML, or N-Triples.
+    Returns a list of RDF graphs and error messages.
+    """
+    graphs = []
+    errors = []
+    try:
+        content = uploaded_file.read().decode("utf-8")
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        if file_extension in ["json", "jsonld"]:
+            json_obj = json.loads(content)
+            g = RDFGraph().parse(data=json.dumps(json_obj), format="json-ld")
+            graphs.append(g)
+        elif file_extension in ["ttl", "rdf", "nt"]:
+            g = parse_rdf_data(content, file_extension)
+            graphs.append(g)
+        else:
+            errors.append(f"Unsupported file format: {uploaded_file.name}")
+    except Exception as e:
+        errors.append(f"Error processing file {uploaded_file.name}: {e}")
+    return graphs, errors
+
+def validate_with_shacl(rdf_graph: RDFGraph, shacl_data: str, shacl_format: str = "turtle") -> Tuple[bool, str]:
+    """
+    Validate an RDF graph using SHACL shapes.
+    """
+    if not pyshacl_installed:
+        return False, "pySHACL is not installed."
+    conforms, results_graph, report_text = validate(
+        data_graph=rdf_graph,
+        shacl_graph=RDFGraph().parse(data=shacl_data, format=shacl_format),
+        inference='rdfs',
+        debug=True
+    )
+    return conforms, report_text
+
+def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
+    """
+    Fetch RDF data from a given URI, parse it, log new triples, and return both the graph and the triple count.
+    """
+    try:
+        headers = {"Accept": "application/rdf+xml, text/turtle, application/ld+json, text/plain"}
+        response = requests.get(uri, headers=headers, timeout=10)
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "")
+        if "xml" in content_type:
+            fmt = "xml"
+        elif "turtle" in content_type or uri.endswith(".ttl"):
+            fmt = "turtle"
+        elif "n-triples" in content_type or uri.endswith(".nt"):
+            fmt = "nt"
+        elif "json" in content_type:
+            fmt = "json-ld"
+        else:
+            fmt = "xml"
+        
+        new_graph = RDFGraph()
+        new_graph.parse(data=response.text, format=fmt)
+        count = len(new_graph)
+        logging.info(f"URI '{uri}' dereferencing fetched {count} triple(s).")
+        for triple in new_graph:
+            logging.debug(f"Fetched triple: {triple}")
+        return new_graph, count
+    except Exception as e:
+        logging.error(f"URI dereferencing failed for {uri}: {e}")
+        return None
+
+def apply_rdfs_reasoning(rdf_graph: RDFGraph) -> Tuple[RDFGraph, int]:
+    """
+    Apply basic RDFS reasoning to the RDF graph using owlrl,
+    log new triples added, and return both the updated graph and the count of new triples.
+    """
+    initial_triples = set(rdf_graph)
+    if owlrl_installed:
+        DeductiveClosure(RDFS_Semantics).expand(rdf_graph)
+    else:
+        logging.warning("owlrl not installed. Skipping RDFS reasoning.")
+    new_triples = set(rdf_graph) - initial_triples
+    count = len(new_triples)
+    logging.info(f"RDFS reasoning added {count} new triple(s).")
+    for triple in new_triples:
+        logging.debug(f"New triple: {triple}")
+    return rdf_graph, count
+
+def suggest_ontologies(rdf_graph: RDFGraph) -> List[str]:
+    """
+    Analyze the RDF graph and suggest relevant ontologies.
+    """
+    suggested = []
+    known_vocabularies = {
+        "http://xmlns.com/foaf/0.1/": "FOAF",
+        "http://purl.org/dc/terms/": "Dublin Core",
+        "http://schema.org/": "Schema.org",
+        "http://www.w3.org/2004/02/skos/core#": "SKOS"
+    }
+    namespaces = dict(rdf_graph.namespaces())
+    for ns_uri, name in known_vocabularies.items():
+        if ns_uri in namespaces.values():
+            suggested.append(name)
+    return suggested
+
+def load_schema_mapping(mapping_file: str) -> Dict[str, str]:
+    """
+    Load a JSON file containing schema mapping rules.
+    """
+    try:
+        with open(mapping_file, "r") as f:
+            mapping = json.load(f)
+        return mapping
+    except Exception as e:
+        log_error(f"Error loading schema mapping: {e}")
+        return {}
 
 # ------------------------------
 # Data Models
@@ -356,23 +409,9 @@ class GraphData:
 @st.cache_data(show_spinner=False)
 @profile_time
 def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, Dict[str, str], List[str]]:
-    """
-    Parse and normalize entities from a list of JSON content strings.
-    
-    Parameters
-    ----------
-    file_contents : list of str
-        List of JSON strings representing entities.
-    
-    Returns
-    -------
-    Tuple[GraphData, Dict[str, str], List[str]]
-        A tuple of graph data, a mapping of entity IDs to labels, and a list of error messages.
-    """
     nodes: List[Node] = []
     id_to_label: Dict[str, str] = {}
     errors: List[str] = []
-    
     for idx, content in enumerate(file_contents):
         try:
             json_obj = json.loads(content)
@@ -380,12 +419,9 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
             subject_id: str = normalized['id']
             label: str = normalized['prefLabel']['en']
             entity_types: List[str] = normalized.get('type', ['Unknown'])
-            
-            # Validate required schema
             validation_errors = validate_entity(normalized)
             if validation_errors:
                 errors.append(f"Entity '{subject_id}' errors: " + "; ".join(validation_errors))
-            
             edges: List[Edge] = []
             for rel in CONFIG["RELATIONSHIP_CONFIG"]:
                 values = normalized.get(rel, [])
@@ -395,45 +431,25 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
                     normalized_id = normalize_relationship_value(rel, value)
                     if normalized_id:
                         edges.append(Edge(source=subject_id, target=normalized_id, relationship=rel))
-            
             new_node = Node(id=subject_id, label=label, types=entity_types, metadata=normalized, edges=edges)
             nodes.append(new_node)
             id_to_label[subject_id] = label
-        
         except Exception as e:
             err = f"File {idx}: {str(e)}\n{traceback.format_exc()}"
             errors.append(err)
             log_error(err)
-    
     return GraphData(nodes=nodes), id_to_label, errors
 
 @profile_time
 def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
-    """
-    Convert graph data to an RDF graph.
-    
-    Parameters
-    ----------
-    graph_data : GraphData
-        The graph data to be converted.
-    
-    Returns
-    -------
-    RDFGraph
-        An RDF graph representation of the data.
-    """
     g = RDFGraph()
     g.bind("ex", EX)
-    
     for node in graph_data.nodes:
         subject = URIRef(node.id)
         label = node.metadata.get("prefLabel", {}).get("en", node.id)
         g.add((subject, RDFS.label, Literal(label, lang="en")))
-        # Insert RDF types
         for t in node.types:
             g.add((subject, RDF.type, EX[t]))
-        
-        # Insert additional metadata
         for key, value in node.metadata.items():
             if key in ("id", "prefLabel", "type"):
                 continue
@@ -450,55 +466,23 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
                         g.add((subject, EX[key], Literal(v)))
                 else:
                     g.add((subject, EX[key], Literal(value)))
-        
-        # Insert edges
         for edge in node.edges:
             g.add((subject, EX[edge.relationship], URIRef(edge.target)))
-    
     return g
 
 def run_sparql_query(query: str, rdf_graph: RDFGraph) -> Set[str]:
-    """
-    Execute a SPARQL query on an RDF graph.
-    
-    Parameters
-    ----------
-    query : str
-        SPARQL query string.
-    rdf_graph : RDFGraph
-        RDF graph to query.
-    
-    Returns
-    -------
-    set of str
-        Set of resulting node IDs.
-    """
     result = rdf_graph.query(query, initNs={'rdf': RDF, 'ex': EX})
     return {str(row[0]) for row in result if row[0] is not None}
 
 @st.cache_data(show_spinner=False)
 @profile_time
 def compute_centrality_measures(graph_data: GraphData) -> Dict[str, Dict[str, float]]:
-    """
-    Compute various centrality measures for nodes in the graph.
-    
-    Parameters
-    ----------
-    graph_data : GraphData
-        The graph data.
-    
-    Returns
-    -------
-    dict
-        A dictionary mapping node IDs to centrality metrics.
-    """
     G = nx.DiGraph()
     for node in graph_data.nodes:
         G.add_node(node.id)
     for node in graph_data.nodes:
         for edge in node.edges:
             G.add_edge(edge.source, edge.target)
-    
     degree = nx.degree_centrality(G)
     betweenness = nx.betweenness_centrality(G)
     closeness = nx.closeness_centrality(G)
@@ -508,7 +492,6 @@ def compute_centrality_measures(graph_data: GraphData) -> Dict[str, Dict[str, fl
         log_error(f"Eigenvector centrality computation failed: {e}")
         eigenvector = {node: 0.0 for node in G.nodes()}
     pagerank = nx.pagerank(G)
-    
     centrality = {}
     for node in G.nodes():
         centrality[node] = {
@@ -521,23 +504,6 @@ def compute_centrality_measures(graph_data: GraphData) -> Dict[str, Dict[str, fl
     return centrality
 
 def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> List[str]:
-    """
-    Retrieve the relationship labels between two nodes.
-    
-    Parameters
-    ----------
-    source : str
-        Source node ID.
-    target : str
-        Target node ID.
-    graph_data : GraphData
-        The graph data.
-    
-    Returns
-    -------
-    list of str
-        List of relationship labels.
-    """
     relationships = []
     for node in graph_data.nodes:
         if node.id == source:
@@ -550,19 +516,6 @@ def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> Li
 # Community Detection
 # ------------------------------
 def detect_communities_louvain(G: nx.Graph) -> Dict[str, int]:
-    """
-    Detect communities in an undirected graph using the Louvain algorithm.
-    
-    Parameters
-    ----------
-    G : nx.Graph
-        The input graph.
-    
-    Returns
-    -------
-    dict
-        A mapping from node IDs to community IDs.
-    """
     if louvain_installed:
         partition = community_louvain.best_partition(G)
         return partition
@@ -578,24 +531,23 @@ def add_node(
     node_id: str,
     label: str,
     entity_types: List[str],
-    color: str,
     metadata: Dict[str, Any],
     search_nodes: Optional[List[str]] = None,
     show_labels: bool = True,
     custom_size: Optional[int] = None
 ) -> None:
-    """
-    Add a node to the network visualization.
-    """
+    if any("foaf" in t.lower() for t in entity_types):
+        color = "#FFA07A"
+        shape = "star"
+    else:
+        color = CONFIG["NODE_TYPE_COLORS"].get(entity_types[0], CONFIG["DEFAULT_NODE_COLOR"])
+        shape = CONFIG["NODE_TYPE_SHAPES"].get(entity_types[0], "dot")
     node_title = f"{label}\nTypes: {', '.join(entity_types)}"
-    description = ""
     if "description" in metadata:
         if isinstance(metadata["description"], dict):
-            description = metadata["description"].get("en", "")
+            node_title += f"\nDescription: {metadata['description'].get('en', '')}"
         elif isinstance(metadata["description"], str):
-            description = metadata["description"]
-    if description:
-        node_title += f"\nDescription: {description}"
+            node_title += f"\nDescription: {metadata['description']}"
     if "annotation" in metadata and metadata["annotation"]:
         node_title += f"\nAnnotation: {metadata['annotation']}"
     size = custom_size if custom_size is not None else (20 if (search_nodes and node_id in search_nodes) else 15)
@@ -604,7 +556,7 @@ def add_node(
         label=label if show_labels else "",
         title=node_title,
         color=color,
-        shape=CONFIG["NODE_TYPE_SHAPES"].get(entity_types[0], "dot") if entity_types else "dot",
+        shape=shape,
         size=size,
         font={"size": 12 if size >= 20 else 10, "face": "Arial", "color": "#343a40"},
         borderWidth=2 if (search_nodes and node_id in search_nodes) else 1,
@@ -612,7 +564,7 @@ def add_node(
         shadow=True,
         widthConstraint={"maximum": 150}
     )
-    logging.debug(f"Added node: {label} ({node_id}) with color {color}")
+    logging.debug(f"Added node: {label} ({node_id}) with color {color} and shape {shape}")
 
 def add_edge(
     net: Network,
@@ -624,9 +576,6 @@ def add_edge(
     custom_width: Optional[int] = None,
     custom_color: Optional[str] = None
 ) -> None:
-    """
-    Add an edge to the network visualization.
-    """
     is_search_edge = search_nodes is not None and (src in search_nodes or dst in search_nodes)
     edge_color = custom_color if custom_color is not None else CONFIG["RELATIONSHIP_CONFIG"].get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
@@ -657,9 +606,6 @@ def build_graph(
     centrality: Optional[Dict[str, Dict[str, float]]] = None,
     path_nodes: Optional[List[str]] = None
 ) -> Network:
-    """
-    Build and configure the network graph for visualization.
-    """
     net = Network(
         height="750px",
         width="100%",
@@ -677,21 +623,18 @@ def build_graph(
     added_nodes: Set[str] = set()
     edge_set: Set[Tuple[str, str, str]] = set()
     path_edge_set = set(zip(path_nodes, path_nodes[1:])) if path_nodes else set()
-    
     for node in graph_data.nodes:
         if filtered_nodes is not None and node.id not in filtered_nodes:
             logging.debug(f"Skipping node {node.id} due to filtering")
             continue
-        color = CONFIG["NODE_TYPE_COLORS"].get(node.types[0], CONFIG["DEFAULT_NODE_COLOR"]) if node.types else CONFIG["DEFAULT_NODE_COLOR"]
         custom_size = None
         if centrality and node.id in centrality:
             custom_size = int(15 + centrality[node.id]["degree"] * 30)
         if path_nodes and node.id in path_nodes:
             custom_size = max(custom_size or 15, 25)
         if node.id not in added_nodes:
-            add_node(net, node.id, id_to_label.get(node.id, node.id), node.types, color, node.metadata, search_nodes, show_labels, custom_size)
+            add_node(net, node.id, id_to_label.get(node.id, node.id), node.types, node.metadata, search_nodes, show_labels, custom_size)
             added_nodes.add(node.id)
-    
     for node in graph_data.nodes:
         for edge in node.edges:
             if edge.relationship not in selected_relationships:
@@ -701,7 +644,7 @@ def build_graph(
                 continue
             if edge.target not in added_nodes:
                 target_label = id_to_label.get(edge.target, edge.target)
-                add_node(net, edge.target, target_label, ["Unknown"], CONFIG["DEFAULT_NODE_COLOR"], {}, search_nodes, show_labels)
+                add_node(net, edge.target, target_label, ["Unknown"], {}, search_nodes, show_labels)
                 added_nodes.add(edge.target)
             if (edge.source, edge.target, edge.relationship) not in edge_set:
                 if path_nodes and (edge.source, edge.target) in path_edge_set:
@@ -712,7 +655,6 @@ def build_graph(
                     custom_color = None
                 add_edge(net, edge.source, edge.target, edge.relationship, id_to_label, search_nodes, custom_width, custom_color)
                 edge_set.add((edge.source, edge.target, edge.relationship))
-    
     node_count = len(net.nodes)
     node_font_size = 12 if node_count <= 50 else 10
     edge_font_size = 10 if node_count <= 50 else 8
@@ -755,10 +697,7 @@ def build_graph(
         }
     }
     net.options = default_options
-
-    # --- Updated Community Detection Block ---
     if community_detection:
-        # Build an undirected graph from pyvis nodes for community detection.
         G_comm = nx.Graph()
         for node in net.nodes:
             if "id" in node:
@@ -773,15 +712,12 @@ def build_graph(
                 "#77AADD", "#EE8866", "#EEDD88", "#FFAABB", "#99DDFF", 
                 "#44BB99", "#BBCC33", "#AAAA00", "#DDDDDD" 
             ]
-            # Update node colors based on community assignment.
             for node in net.nodes:
                 node_id = node.get("id")
                 if node_id in partition:
                     node["color"] = community_colors[partition[node_id] % len(community_colors)]
         else:
             st.info("Louvain community detection not available.")
-    # --- End Updated Community Detection Block ---
-
     custom_js = """
     <script type="text/javascript">
       setTimeout(function() {
@@ -812,24 +748,10 @@ def build_graph(
                 node['y'] = pos['y']
                 node['fixed'] = True
                 node['physics'] = False
-
     net.html = net.generate_html() + custom_js
     return net
 
 def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
-    """
-    Convert the network graph to a JSON-LD representation.
-    
-    Parameters
-    ----------
-    net : Network
-        The network visualization object.
-    
-    Returns
-    -------
-    dict
-        JSON-LD formatted graph data.
-    """
     nodes_dict = {}
     for node in net.nodes:
         node_id = node.get("id")
@@ -871,21 +793,6 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
 # Streamlit UI and Main Function
 # ------------------------------
 def create_legends(rel_colors: Dict[str, str], node_colors: Dict[str, str]) -> str:
-    """
-    Create HTML legends for relationships and node types.
-    
-    Parameters
-    ----------
-    rel_colors : dict
-        Relationship color mapping.
-    node_colors : dict
-        Node type color mapping.
-    
-    Returns
-    -------
-    str
-        HTML string for legends.
-    """
     rel_items = "".join(
         f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>"
         for rel, color in rel_colors.items()
@@ -907,9 +814,6 @@ def create_legends(rel_colors: Dict[str, str], node_colors: Dict[str, str]) -> s
     )
 
 def main() -> None:
-    """
-    Main function to run the Streamlit UI.
-    """
     custom_css = """
     <style>
         .stApp {
@@ -961,11 +865,13 @@ def main() -> None:
     st.caption("Visualize and navigate your linked data with enhanced scientific rigor.")
     
     with st.expander("How to Use This App"):
-        st.write("1. Upload your JSON/JSON‑LD files in the **File Upload** section on the sidebar.")
-        st.write("2. Adjust visualization settings like physics, filtering, and centrality measures.")
-        st.write("3. (Optional) Run SPARQL queries or load data from a remote SPARQL endpoint.")
-        st.write("4. Explore the graph in the **Graph View** tab below!")
-        st.write("5. Set manual node positions using the sidebar.")
+        st.write("1. Upload your JSON/JSON‑LD/RDF files in the **File Upload** section on the sidebar.")
+        st.write("2. Optionally, upload a SHACL shapes file to validate your data.")
+        st.write("3. Adjust visualization settings like physics, filtering, and centrality measures.")
+        st.write("4. (Optional) Run SPARQL queries or load data from a remote SPARQL endpoint.")
+        st.write("5. Use URI Dereferencing to load external RDF data by providing a list of URIs.")
+        st.write("6. Explore the graph in the **Graph View** tab below!")
+        st.write("7. Set manual node positions using the sidebar.")
 
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
@@ -1006,16 +912,27 @@ def main() -> None:
     if "annotations" not in st.session_state:
         st.session_state.annotations = {}
     
-    # Sidebar: File Upload and SPARQL Endpoint
+    # Sidebar: File Upload and RDF Ingestion
     with st.sidebar.expander("File Upload"):
         uploaded_files = st.sidebar.file_uploader(
-            label="Upload JSON Files",
-            type=["json", "jsonld"],
+            label="Upload JSON/RDF Files",
+            type=["json", "jsonld", "ttl", "rdf", "nt"],
             accept_multiple_files=True,
-            help="Select JSON files describing entities and relationships"
+            help="Select files describing entities and relationships"
         )
         if uploaded_files:
-            file_contents = [f.read().decode("utf-8") for f in uploaded_files]
+            file_contents = []
+            all_errors = []
+            for file in uploaded_files:
+                if file.name.split('.')[-1].lower() in ["ttl", "rdf", "nt"]:
+                    graphs, errors = process_uploaded_file(file)
+                    if graphs:
+                        for g in graphs:
+                            file_contents.append(g.serialize(format="json-ld").decode("utf-8"))
+                    if errors:
+                        all_errors.extend(errors)
+                else:
+                    file_contents.append(file.read().decode("utf-8"))
             graph_data, id_to_label, errors = parse_entities_from_contents(file_contents)
             st.session_state.graph_data = graph_data
             st.session_state.id_to_label = id_to_label
@@ -1023,9 +940,9 @@ def main() -> None:
                 st.session_state.rdf_graph = convert_graph_data_to_rdf(graph_data)
             except Exception as e:
                 st.error(f"Error converting graph data to RDF: {e}")
-            if errors:
+            if errors or all_errors:
                 with st.expander("Data Validation"):
-                    for error in errors:
+                    for error in errors + all_errors:
                         st.error(error)
         
         st.markdown("---")
@@ -1044,6 +961,54 @@ def main() -> None:
                     st.session_state.rdf_graph = convert_graph_data_to_rdf(remote_graph)
                 except Exception as e:
                     st.error(f"Error converting SPARQL data to RDF: {e}")
+        
+        st.markdown("---")
+        st.subheader("SHACL Validation")
+        if st.sidebar.checkbox("Upload SHACL Shapes for Validation"):
+            shacl_file = st.sidebar.file_uploader("Upload SHACL file", type=["ttl", "turtle", "rdf"])
+            if shacl_file and "rdf_graph" in st.session_state:
+                shacl_content = shacl_file.read().decode("utf-8")
+                conforms, report = validate_with_shacl(st.session_state.rdf_graph, shacl_content)
+                if not conforms:
+                    st.error("SHACL Validation Failed:")
+                    st.text(report)
+                else:
+                    st.success("SHACL Validation Passed!")
+        
+        st.markdown("---")
+        st.subheader("URI Dereferencing")
+        if st.sidebar.checkbox("Enable URI Dereferencing"):
+            uri_input = st.sidebar.text_area("Enter URIs (one per line)")
+            if uri_input:
+                uris = [line.strip() for line in uri_input.splitlines() if line.strip()]
+                deref_graph = RDFGraph()
+                messages = []
+                for uri in uris:
+                    result = dereference_uri(uri)
+                    if result:
+                        g, count = result
+                        deref_graph += g
+                        messages.append(f"URI '{uri}' fetched {count} triple(s).")
+                if "rdf_graph" in st.session_state:
+                    st.session_state.rdf_graph += deref_graph
+                    st.success("Dereferenced URIs added to the RDF graph!")
+                    for msg in messages:
+                        st.info(msg)
+    
+    # Sidebar: Reasoning and Ontology Suggestions
+    with st.sidebar.expander("Semantic Enhancements"):
+        if st.sidebar.checkbox("Enable RDFS Reasoning"):
+            if "rdf_graph" in st.session_state:
+                new_graph, new_count = apply_rdfs_reasoning(st.session_state.rdf_graph)
+                st.session_state.rdf_graph = new_graph
+                st.success(f"RDFS reasoning applied! Added {new_count} new triple(s).")
+        if st.sidebar.checkbox("Suggest Ontologies"):
+            if "rdf_graph" in st.session_state:
+                suggestions = suggest_ontologies(st.session_state.rdf_graph)
+                if suggestions:
+                    st.info("Suggested ontologies: " + ", ".join(suggestions))
+                else:
+                    st.info("No ontology suggestions available.")
     
     # Sidebar: Visualization Settings
     with st.sidebar.expander("Visualization Settings"):
@@ -1089,20 +1054,9 @@ def main() -> None:
     # Sidebar: Graph Pathfinding
     with st.sidebar.expander("Graph Pathfinding"):
         if st.session_state.graph_data.nodes:
-            # Build a mapping of node IDs to labels for user-friendly display
             node_options = {n.id: st.session_state.id_to_label.get(n.id, n.id) for n in st.session_state.graph_data.nodes}
-            source_pf = st.selectbox(
-                "Source Node", 
-                options=list(node_options.keys()), 
-                format_func=lambda x: node_options[x], 
-                key="pf_source"
-            )
-            target_pf = st.selectbox(
-                "Target Node", 
-                options=list(node_options.keys()), 
-                format_func=lambda x: node_options[x], 
-                key="pf_target"
-            )
+            source_pf = st.selectbox("Source Node", options=list(node_options.keys()), format_func=lambda x: node_options[x], key="pf_source")
+            target_pf = st.selectbox("Target Node", options=list(node_options.keys()), format_func=lambda x: node_options[x], key="pf_target")
             if st.button("Find Shortest Path"):
                 try:
                     G_pf = nx.DiGraph()
@@ -1398,7 +1352,7 @@ def main() -> None:
                 jsonld_str = json.dumps(jsonld_data, indent=2)
                 st.download_button("Download Graph Data as JSON‑LD", data=jsonld_str, file_name="graph_data.jsonld", mime="application/ld+json")
         else:
-            st.info("No valid data found. Please check your JSON files.")
+            st.info("No valid data found. Please check your JSON/RDF files.")
     
     with tabs[1]:
         st.header("Data View")
@@ -1415,14 +1369,13 @@ def main() -> None:
             csv_data = df_nodes.to_csv(index=False).encode('utf-8')
             st.download_button("Download Nodes as CSV", data=csv_data, file_name="nodes.csv", mime="text/csv")
         else:
-            st.info("No data available. Please upload JSON files.")
+            st.info("No data available. Please upload JSON/RDF files.")
     
     with tabs[2]:
         st.header("Centrality Measures")
         if st.session_state.centrality_measures:
             centrality_df = pd.DataFrame.from_dict(st.session_state.centrality_measures, orient='index').reset_index().rename(columns={"index": "Node ID"})
             centrality_df["Label"] = centrality_df["Node ID"].map(st.session_state.id_to_label)
-            # Optional: Reorder columns so "Node ID" and "Label" come first.
             cols = ["Node ID", "Label"] + [col for col in centrality_df.columns if col not in ("Node ID", "Label")]
             centrality_df = centrality_df[cols]
             st.dataframe(centrality_df)
@@ -1489,22 +1442,20 @@ def main() -> None:
         st.markdown(
             """
             ### Explore Relationships Between Entities
-            Upload multiple JSON files representing entities and generate an interactive network.
+            Upload multiple JSON or RDF files representing entities and generate an interactive network.
             Use the sidebar to filter relationships, search for nodes, set manual positions,
             and edit the graph directly.
             
-            **Features:**
-            - **Tabbed Interface:** Separate views for the graph, raw data, centrality measures, SPARQL queries, timeline, and about information.
-            - **Dynamic Graph Visualization:** Interactive network graph with manual node positioning, centrality measures, and optional community detection.
-            - **Physics Presets:** Easily switch between default, high gravity, no physics, or custom physics settings.
-            - **SPARQL Query Support:** Run queries on your RDF-converted graph (syntax highlighting if streamlit-ace is installed).
-            - **IIIF Viewer:** View IIIF manifests for applicable entities.
-            - **Advanced Filtering:** Filter nodes by properties, relationship types, and node types.
-            - **Pathfinding:** Find and visually highlight the shortest path between nodes.
-            - **Node Annotations:** Add custom annotations to nodes.
-            - **Export Options:** Download the graph as HTML, JSON‑LD, or CSV.
+            **Enhanced Features:**
+            - **RDF Ingestion & SHACL Validation:** Directly load RDF (Turtle, RDF/XML, N-Triples) and validate with SHACL.
+            - **URI Dereferencing:** Fetch and integrate external RDF data.
+            - **RDFS Reasoning:** Infer implicit relationships using basic RDFS reasoning.
+            - **Ontology Suggestions:** Get ontology suggestions based on your data.
+            - **Advanced SPARQL Querying:** Run complex queries with syntax highlighting.
+            - **Semantic Graph Visualization:** Nodes and edges are styled based on RDF types and properties.
+            - **Pathfinding, Node Annotations, and Graph Editing:** Interactive tools for network exploration.
             
-            **Version:** 2.0.1  
+            **Version:** 2.1.0  
             **Author:** Huw Sandaver (Refactored by ChatGPT)  
             **Contact:** hsandaver@alumni.unimelb.edu.au
             
@@ -1516,19 +1467,6 @@ def main() -> None:
 # Remote SPARQL Data Loader
 # ------------------------------
 def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str], List[str]]:
-    """
-    Load data from a remote SPARQL endpoint.
-    
-    Parameters
-    ----------
-    endpoint_url : str
-        The URL of the SPARQL endpoint.
-    
-    Returns
-    -------
-    Tuple[GraphData, Dict[str, str], List[str]]
-        Graph data, ID-to-label mapping, and a list of error messages.
-    """
     errors = []
     nodes_dict = {}
     id_to_label = {}
@@ -1574,9 +1512,6 @@ def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str],
 # Automated Testing
 # ------------------------------
 def run_tests():
-    """
-    Run automated tests using the unittest framework.
-    """
     import unittest
     class UtilityTests(unittest.TestCase):
         def test_remove_fragment(self):

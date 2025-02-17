@@ -84,7 +84,8 @@ CONFIG = {
         "foundedBy": "#FF6347",
         "containedInPlace": "#F39C12",
         "owner": "#3498DB",
-        "isPartOf": "#B39DDB"
+        "isPartOf": "#B39DDB",
+        "relatedPlace": "#A3E4D7"
     },
     "NODE_TYPE_COLORS": {
         "Person": "#FFA500",

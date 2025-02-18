@@ -1,15 +1,17 @@
 #!/usr/bin/env python
 """
-Linked Data Explorer - Refactored for Scientific Rigor with Enhanced Linked Data Features
+Linked Data Explorer - Refactored for Scientific Rigor with Enhanced Linked Data Features,
+Integrated Probabilistic Graph Embedding Model, and Node Similarity Search
 Author: Huw Sandaver (Refactored by ChatGPT)
-Version: 2.1.0
-Date: 2025-02-17
+Version: 2.1.3
+Date: 2025-02-18
 
 Description:
 This code implements a modular, robust, and reproducible pipeline for exploring linked data as a network.
 It includes enhanced data ingestion (support for RDF formats, SHACL validation, URI dereferencing),
-basic RDF reasoning, ontology suggestions, schema mapping stubs, advanced SPARQL querying, and enriched graph
-visualization with semantic styling.
+basic RDF reasoning, ontology suggestions, schema mapping stubs, advanced SPARQL querying, enriched graph
+visualization with semantic styling, an integrated probabilistic graph embedding model (via node2vec),
+and a new Node Similarity Search tab that computes cosine similarity between node embeddings.
 """
 
 # ------------------------------
@@ -26,6 +28,7 @@ from urllib.parse import urlparse, urlunparse
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
+import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
@@ -35,7 +38,10 @@ import networkx as nx
 import pandas as pd
 import requests
 from dateutil.parser import parse as parse_date
-import plotly.express as px  # Added Plotly Express import
+import plotly.express as px
+
+# Import t-SNE from scikit-learn for potential future use
+from sklearn.manifold import TSNE
 
 # Optional community detection (Louvain)
 try:
@@ -62,6 +68,13 @@ try:
     owlrl_installed = True
 except ImportError:
     owlrl_installed = False
+
+# Optional Node2Vec for probabilistic graph embedding
+try:
+    from node2vec import Node2Vec
+    node2vec_installed = True
+except ImportError:
+    node2vec_installed = False
 
 # ------------------------------
 # Configuration and Constants
@@ -135,7 +148,7 @@ EX = Namespace(CONFIG["NAMESPACE"])
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ------------------------------
-# Performance Profiling Decorator
+# Helper Functions
 # ------------------------------
 def profile_time(func):
     @functools.wraps(func)
@@ -147,19 +160,19 @@ def profile_time(func):
         return result
     return wrapper
 
-# ------------------------------
-# Utility Functions
-# ------------------------------
-def log_error(message: str) -> None:
-    logging.error(message)
-
 def remove_fragment(uri: str) -> str:
     try:
         parsed = urlparse(uri)
         return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, parsed.query, ''))
     except Exception as e:
-        log_error(f"Error removing fragment from {uri}: {e}")
+        logging.error(f"Error removing fragment from {uri}: {e}")
         return uri
+
+def copy_graph(rdf_graph: RDFGraph) -> RDFGraph:
+    new_graph = RDFGraph()
+    for triple in rdf_graph:
+        new_graph.add(triple)
+    return new_graph
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     if isinstance(value, dict):
@@ -195,7 +208,7 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 elif isinstance(data[time_field], str):
                     data[time_field] = [{"time:inXSDDateTimeStamp": {"@value": parse_date(data[time_field]).isoformat()}}]
             except Exception as e:
-                log_error(f"Error parsing {time_field} for {data['id']}: {e}")
+                logging.error(f"Error parsing {time_field} for {data['id']}: {e}")
     for rel in list(data.keys()):
         if rel not in CONFIG["RELATIONSHIP_CONFIG"]:
             continue
@@ -251,10 +264,6 @@ def format_metadata(metadata: Dict[str, Any]) -> str:
 # New Functions for RDF Ingestion and Validation
 # ------------------------------
 def parse_rdf_data(content: str, file_extension: str) -> RDFGraph:
-    """
-    Parse RDF data from a string based on file extension.
-    Supported formats: Turtle (.ttl), RDF/XML (.rdf), N-Triples (.nt).
-    """
     rdf_graph = RDFGraph()
     fmt = None
     if file_extension == "ttl":
@@ -269,10 +278,6 @@ def parse_rdf_data(content: str, file_extension: str) -> RDFGraph:
     return rdf_graph
 
 def process_uploaded_file(uploaded_file) -> Tuple[List[RDFGraph], List[str]]:
-    """
-    Process an uploaded file which might contain JSON, JSON-LD, Turtle, RDF/XML, or N-Triples.
-    Returns a list of RDF graphs and error messages.
-    """
     graphs = []
     errors = []
     try:
@@ -292,9 +297,6 @@ def process_uploaded_file(uploaded_file) -> Tuple[List[RDFGraph], List[str]]:
     return graphs, errors
 
 def validate_with_shacl(rdf_graph: RDFGraph, shacl_data: str, shacl_format: str = "turtle") -> Tuple[bool, str]:
-    """
-    Validate an RDF graph using SHACL shapes.
-    """
     if not pyshacl_installed:
         return False, "pySHACL is not installed."
     conforms, results_graph, report_text = validate(
@@ -306,9 +308,6 @@ def validate_with_shacl(rdf_graph: RDFGraph, shacl_data: str, shacl_format: str 
     return conforms, report_text
 
 def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
-    """
-    Fetch RDF data from a given URI, parse it, log new triples, and return both the graph and the triple count.
-    """
     try:
         headers = {"Accept": "application/rdf+xml, text/turtle, application/ld+json, text/plain"}
         response = requests.get(uri, headers=headers, timeout=10)
@@ -324,7 +323,6 @@ def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
             fmt = "json-ld"
         else:
             fmt = "xml"
-        
         new_graph = RDFGraph()
         new_graph.parse(data=response.text, format=fmt)
         count = len(new_graph)
@@ -337,10 +335,6 @@ def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
         return None
 
 def apply_rdfs_reasoning(rdf_graph: RDFGraph) -> Tuple[RDFGraph, int]:
-    """
-    Apply basic RDFS reasoning to the RDF graph using owlrl,
-    log new triples added, and return both the updated graph and the count of new triples.
-    """
     initial_triples = set(rdf_graph)
     if owlrl_installed:
         DeductiveClosure(RDFS_Semantics).expand(rdf_graph)
@@ -354,9 +348,6 @@ def apply_rdfs_reasoning(rdf_graph: RDFGraph) -> Tuple[RDFGraph, int]:
     return rdf_graph, count
 
 def suggest_ontologies(rdf_graph: RDFGraph) -> List[str]:
-    """
-    Analyze the RDF graph and suggest relevant ontologies.
-    """
     suggested = []
     known_vocabularies = {
         "http://xmlns.com/foaf/0.1/": "FOAF",
@@ -371,15 +362,12 @@ def suggest_ontologies(rdf_graph: RDFGraph) -> List[str]:
     return suggested
 
 def load_schema_mapping(mapping_file: str) -> Dict[str, str]:
-    """
-    Load a JSON file containing schema mapping rules.
-    """
     try:
         with open(mapping_file, "r") as f:
             mapping = json.load(f)
         return mapping
     except Exception as e:
-        log_error(f"Error loading schema mapping: {e}")
+        logging.error(f"Error loading schema mapping: {e}")
         return {}
 
 # ------------------------------
@@ -437,7 +425,7 @@ def parse_entities_from_contents(file_contents: List[str]) -> Tuple[GraphData, D
         except Exception as e:
             err = f"File {idx}: {str(e)}\n{traceback.format_exc()}"
             errors.append(err)
-            log_error(err)
+            logging.error(err)
     return GraphData(nodes=nodes), id_to_label, errors
 
 @profile_time
@@ -457,15 +445,28 @@ def convert_graph_data_to_rdf(graph_data: GraphData) -> RDFGraph:
                 if not isinstance(value, list):
                     value = [value]
                 for v in value:
-                    g.add((subject, EX[key], URIRef(v)))
+                    if isinstance(v, dict):
+                        normalized_v = normalize_relationship_value(key, v)
+                        if normalized_v and normalized_v.startswith("http"):
+                            g.add((subject, EX[key], URIRef(normalized_v)))
+                        else:
+                            g.add((subject, EX[key], Literal(json.dumps(v))))
+                    else:
+                        g.add((subject, EX[key], URIRef(v)))
             else:
                 if isinstance(value, str):
                     g.add((subject, EX[key], Literal(value)))
                 elif isinstance(value, list):
                     for v in value:
-                        g.add((subject, EX[key], Literal(v)))
+                        if isinstance(v, dict):
+                            g.add((subject, EX[key], Literal(json.dumps(v))))
+                        else:
+                            g.add((subject, EX[key], Literal(v)))
                 else:
-                    g.add((subject, EX[key], Literal(value)))
+                    if isinstance(value, dict):
+                        g.add((subject, EX[key], Literal(json.dumps(value))))
+                    else:
+                        g.add((subject, EX[key], Literal(value)))
         for edge in node.edges:
             g.add((subject, EX[edge.relationship], URIRef(edge.target)))
     return g
@@ -489,7 +490,7 @@ def compute_centrality_measures(graph_data: GraphData) -> Dict[str, Dict[str, fl
     try:
         eigenvector = nx.eigenvector_centrality(G, max_iter=1000)
     except Exception as e:
-        log_error(f"Eigenvector centrality computation failed: {e}")
+        logging.error(f"Eigenvector centrality computation failed: {e}")
         eigenvector = {node: 0.0 for node in G.nodes()}
     pagerank = nx.pagerank(G)
     centrality = {}
@@ -513,29 +514,33 @@ def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> Li
     return relationships
 
 # ------------------------------
-# Community Detection
+# Integrated Probabilistic Graph Embedding Model
 # ------------------------------
-def detect_communities_louvain(G: nx.Graph) -> Dict[str, int]:
-    if louvain_installed:
-        partition = community_louvain.best_partition(G)
-        return partition
-    else:
-        log_error("Louvain community detection not installed. Skipping community detection.")
-        return {}
+@st.cache_data(show_spinner=False)
+@profile_time
+def compute_probabilistic_graph_embeddings(graph_data: GraphData, dimensions=64, walk_length=30, num_walks=200, p=1, q=1, workers=4) -> Dict[str, List[float]]:
+    G = nx.DiGraph()
+    for node in graph_data.nodes:
+        G.add_node(node.id)
+    for node in graph_data.nodes:
+        for edge in node.edges:
+            G.add_edge(edge.source, edge.target)
+    if not node2vec_installed:
+        logging.error("node2vec library not installed. Returning dummy embeddings.")
+        return {node: [0.0]*dimensions for node in G.nodes()}
+    node2vec = Node2Vec(G, dimensions=dimensions, walk_length=walk_length, num_walks=num_walks, p=p, q=q, workers=workers)
+    model = node2vec.fit(window=10, min_count=1, batch_words=4)
+    embeddings = {}
+    for node in G.nodes():
+        embeddings[node] = model.wv[node].tolist()
+    logging.info("Probabilistic Graph Embeddings computed for all nodes.")
+    return embeddings
 
 # ------------------------------
 # Graph Building and Visualization
 # ------------------------------
-def add_node(
-    net: Network,
-    node_id: str,
-    label: str,
-    entity_types: List[str],
-    metadata: Dict[str, Any],
-    search_nodes: Optional[List[str]] = None,
-    show_labels: bool = True,
-    custom_size: Optional[int] = None
-) -> None:
+def add_node(net: Network, node_id: str, label: str, entity_types: List[str], metadata: Dict[str, Any],
+             search_nodes: Optional[List[str]] = None, show_labels: bool = True, custom_size: Optional[int] = None) -> None:
     if any("foaf" in t.lower() for t in entity_types):
         color = "#FFA07A"
         shape = "star"
@@ -551,75 +556,36 @@ def add_node(
     if "annotation" in metadata and metadata["annotation"]:
         node_title += f"\nAnnotation: {metadata['annotation']}"
     size = custom_size if custom_size is not None else (20 if (search_nodes and node_id in search_nodes) else 15)
-    net.add_node(
-        node_id,
-        label=label if show_labels else "",
-        title=node_title,
-        color=color,
-        shape=shape,
-        size=size,
-        font={"size": 12 if size >= 20 else 10, "face": "Arial", "color": "#343a40"},
-        borderWidth=2 if (search_nodes and node_id in search_nodes) else 1,
-        borderColor="#FF5733" if (search_nodes and node_id in search_nodes) else "#343a40",
-        shadow=True,
-        widthConstraint={"maximum": 150}
-    )
+    net.add_node(node_id, label=label if show_labels else "", title=node_title, color=color, shape=shape,
+                 size=size, font={"size": 12 if size >= 20 else 10, "face": "Arial", "color": "#343a40"},
+                 borderWidth=2 if (search_nodes and node_id in search_nodes) else 1,
+                 borderColor="#FF5733" if (search_nodes and node_id in search_nodes) else "#343a40",
+                 shadow=True, widthConstraint={"maximum": 150})
     logging.debug(f"Added node: {label} ({node_id}) with color {color} and shape {shape}")
 
-def add_edge(
-    net: Network,
-    src: str,
-    dst: str,
-    relationship: str,
-    id_to_label: Dict[str, str],
-    search_nodes: Optional[List[str]] = None,
-    custom_width: Optional[int] = None,
-    custom_color: Optional[str] = None
-) -> None:
+def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: Dict[str, str],
+             search_nodes: Optional[List[str]] = None, custom_width: Optional[int] = None, custom_color: Optional[str] = None) -> None:
     is_search_edge = search_nodes is not None and (src in search_nodes or dst in search_nodes)
     edge_color = custom_color if custom_color is not None else CONFIG["RELATIONSHIP_CONFIG"].get(relationship, "#A9A9A9")
     label_text = " ".join(word.capitalize() for word in relationship.split('_'))
     width = custom_width if custom_width is not None else (3 if is_search_edge else 2)
-    net.add_edge(
-        src,
-        dst,
-        label=label_text,
-        color=edge_color,
-        width=width,
-        arrows='to',
-        title=f"{label_text}: {id_to_label.get(src, src)} → {id_to_label.get(dst, dst)}",
-        font={"size": 10 if is_search_edge else 8, "align": "middle"},
-        smooth={'enabled': True, 'type': 'continuous'}
-    )
+    net.add_edge(src, dst, label=label_text, color=edge_color, width=width, arrows='to',
+                 title=f"{label_text}: {id_to_label.get(src, src)} → {id_to_label.get(dst, dst)}",
+                 font={"size": 10 if is_search_edge else 8, "align": "middle"}, smooth={'enabled': True, 'type': 'continuous'})
     logging.debug(f"Added edge: {src} --{label_text}--> {dst}")
 
+# Use st.cache_resource for build_graph since pyvis.Network is unserializable.
+@st.cache_resource(show_spinner=False)
 @profile_time
-def build_graph(
-    graph_data: GraphData,
-    id_to_label: Dict[str, str],
-    selected_relationships: List[str],
-    search_nodes: Optional[List[str]] = None,
-    node_positions: Optional[Dict[str, Dict[str, float]]] = None,
-    show_labels: bool = True,
-    filtered_nodes: Optional[Set[str]] = None,
-    community_detection: bool = False,
-    centrality: Optional[Dict[str, Dict[str, float]]] = None,
-    path_nodes: Optional[List[str]] = None
-) -> Network:
-    net = Network(
-        height="750px",
-        width="100%",
-        directed=True,
-        notebook=False,
-        bgcolor="#f0f2f6",
-        font_color="#343a40"
-    )
-    net.force_atlas_2based(
-        gravity=st.session_state.physics_params.get("gravity", CONFIG["PHYSICS_DEFAULTS"]["gravity"]),
-        central_gravity=st.session_state.physics_params.get("centralGravity", CONFIG["PHYSICS_DEFAULTS"]["centralGravity"]),
-        spring_length=st.session_state.physics_params.get("springLength", CONFIG["PHYSICS_DEFAULTS"]["springLength"]),
-        spring_strength=st.session_state.physics_params.get("springStrength", CONFIG["PHYSICS_DEFAULTS"]["springStrength"])
-    )
+def build_graph(graph_data: GraphData, id_to_label: Dict[str, str], selected_relationships: List[str],
+                search_nodes: Optional[List[str]] = None, node_positions: Optional[Dict[str, Dict[str, float]]] = None,
+                show_labels: bool = True, filtered_nodes: Optional[Set[str]] = None, community_detection: bool = False,
+                centrality: Optional[Dict[str, Dict[str, float]]] = None, path_nodes: Optional[List[str]] = None) -> Network:
+    net = Network(height="750px", width="100%", directed=True, notebook=False, bgcolor="#f0f2f6", font_color="#343a40")
+    net.force_atlas_2based(gravity=st.session_state.physics_params.get("gravity", CONFIG["PHYSICS_DEFAULTS"]["gravity"]),
+                             central_gravity=st.session_state.physics_params.get("centralGravity", CONFIG["PHYSICS_DEFAULTS"]["centralGravity"]),
+                             spring_length=st.session_state.physics_params.get("springLength", CONFIG["PHYSICS_DEFAULTS"]["springLength"]),
+                             spring_strength=st.session_state.physics_params.get("springStrength", CONFIG["PHYSICS_DEFAULTS"]["springStrength"]))
     added_nodes: Set[str] = set()
     edge_set: Set[Tuple[str, str, str]] = set()
     path_edge_set = set(zip(path_nodes, path_nodes[1:])) if path_nodes else set()
@@ -659,42 +625,10 @@ def build_graph(
     node_font_size = 12 if node_count <= 50 else 10
     edge_font_size = 10 if node_count <= 50 else 8
     default_options = {
-        "nodes": {
-            "font": {
-                "size": node_font_size,
-                "face": "Arial",
-                "color": "#343a40",
-                "strokeWidth": 0
-            }
-        },
-        "edges": {
-            "font": {
-                "size": edge_font_size,
-                "face": "Arial",
-                "align": "middle",
-                "color": "#343a40"
-            },
-            "smooth": {"type": "continuous"}
-        },
-        "physics": {
-            "enabled": False,
-            "hierarchicalRepulsion": {
-                "centralGravity": 0,
-                "springLength": 230,
-                "nodeDistance": 210,
-                "avoidOverlap": 1
-            },
-            "minVelocity": 0.75,
-            "solver": "hierarchicalRepulsion"
-        },
-        "interaction": {
-            "hover": True,
-            "navigationButtons": True,
-            "zoomView": True,
-            "dragNodes": True,
-            "multiselect": True,
-            "selectConnectedEdges": True
-        }
+        "nodes": {"font": {"size": node_font_size, "face": "Arial", "color": "#343a40", "strokeWidth": 0}},
+        "edges": {"font": {"size": edge_font_size, "face": "Arial", "align": "middle", "color": "#343a40"}, "smooth": {"type": "continuous"}},
+        "physics": {"enabled": False, "hierarchicalRepulsion": {"centralGravity": 0, "springLength": 230, "nodeDistance": 210, "avoidOverlap": 1}, "minVelocity": 0.75, "solver": "hierarchicalRepulsion"},
+        "interaction": {"hover": True, "navigationButtons": True, "zoomView": True, "dragNodes": True, "multiselect": True, "selectConnectedEdges": True}
     }
     net.options = default_options
     if community_detection:
@@ -706,12 +640,9 @@ def build_graph(
             if "from" in edge and "to" in edge:
                 G_comm.add_edge(edge["from"], edge["to"])
         if louvain_installed:
-            partition = detect_communities_louvain(G_comm)
+            partition = community_louvain.best_partition(G_comm)
             logging.info(f"Community partition: {partition}")
-            community_colors = [
-                "#77AADD", "#EE8866", "#EEDD88", "#FFAABB", "#99DDFF", 
-                "#44BB99", "#BBCC33", "#AAAA00", "#DDDDDD" 
-            ]
+            community_colors = ["#77AADD", "#EE8866", "#EEDD88", "#FFAABB", "#99DDFF", "#44BB99", "#BBCC33", "#AAAA00", "#DDDDDD"]
             for node in net.nodes:
                 node_id = node.get("id")
                 if node_id in partition:
@@ -755,12 +686,7 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
     nodes_dict = {}
     for node in net.nodes:
         node_id = node.get("id")
-        nodes_dict[node_id] = {
-            "@id": node_id,
-            "label": node.get("label", ""),
-            "x": node.get("x"),
-            "y": node.get("y")
-        }
+        nodes_dict[node_id] = {"@id": node_id, "label": node.get("label", ""), "x": node.get("x"), "y": node.get("y")}
         if "types" in node:
             nodes_dict[node_id]["type"] = node["types"]
     for edge in net.edges:
@@ -778,86 +704,30 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
                 nodes_dict[source][prop] = [nodes_dict[source][prop], triple]
         else:
             nodes_dict[source][prop] = triple
-    return {
-        "@context": {
-            "label": "http://www.w3.org/2000/01/rdf-schema#label",
-            "x": "http://example.org/x",
-            "y": "http://example.org/y",
-            "type": "@type",
-            "ex": "http://example.org/"
-        },
-        "@graph": list(nodes_dict.values())
-    }
+    return {"@context": {"label": "http://www.w3.org/2000/01/rdf-schema#label", "x": "http://example.org/x", "y": "http://example.org/y", "type": "@type", "ex": "http://example.org/"},
+            "@graph": list(nodes_dict.values())}
 
 # ------------------------------
 # Streamlit UI and Main Function
 # ------------------------------
 def create_legends(rel_colors: Dict[str, str], node_colors: Dict[str, str]) -> str:
-    rel_items = "".join(
-        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>"
-        for rel, color in rel_colors.items()
-    )
-    node_items = "".join(
-        f"<li><span style='color:{color}; font-size: 16px;'>●</span> {ntype}</li>"
-        for ntype, color in node_colors.items()
-    )
-    return (
-        f"<h4>Legends</h4>"
-        f"<div style='display:flex;'>"
-        f"<ul style='list-style: none; padding: 0; margin-right: 20px;'>"
-        f"<strong>Relationships</strong>{rel_items}"
-        f"</ul>"
-        f"<ul style='list-style: none; padding: 0;'>"
-        f"<strong>Node Types</strong>{node_items}"
-        f"</ul>"
-        f"</div>"
-    )
+    rel_items = "".join(f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>" for rel, color in rel_colors.items())
+    node_items = "".join(f"<li><span style='color:{color}; font-size: 16px;'>●</span> {ntype}</li>" for ntype, color in node_colors.items())
+    return f"<h4>Legends</h4><div style='display:flex;'><ul style='list-style: none; padding: 0; margin-right: 20px;'><strong>Relationships</strong>{rel_items}</ul><ul style='list-style: none; padding: 0;'><strong>Node Types</strong>{node_items}</ul></div>"
 
 def main() -> None:
     custom_css = """
     <style>
-        .stApp {
-            max-width: 1600px;
-            padding: 1rem;
-            background-color: #fafafa;
-            color: #343a40;
-        }
-        section[data-testid="stSidebar"] > div {
-            background-color: #f8f9fa;
-            padding: 1rem;
-        }
-        h1, h2, h3, h4, h5 {
-            color: #333;
-        }
-        .stButton > button, .stDownloadButton > button {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            padding: 0.6rem 1.2rem;
-            border-radius: 0.3rem;
-            font-size: 1rem;
-            transition: background-color 0.3s ease;
-        }
-        .stButton > button:hover, .stDownloadButton > button:hover {
-            background-color: #0056b3;
-        }
-        .css-1d391kg, .stTextInput, .stSelectbox, .stTextArea {
-            border-radius: 4px;
-        }
-        .stTextInput > label, .stSelectbox > label, .stTextArea > label {
-            font-size: 0.9rem;
-            font-weight: 600;
-        }
-        .stExpander > label {
-            font-size: 0.95rem;
-            font-weight: 700;
-        }
-        .stTabs [role="tab"] {
-            font-weight: 600;
-        }
-        header[data-testid="stHeader"] {
-            background: #f8f9fa;
-        }
+        .stApp { max-width: 1600px; padding: 1rem; background-color: #fafafa; color: #343a40; }
+        section[data-testid="stSidebar"] > div { background-color: #f8f9fa; padding: 1rem; }
+        h1, h2, h3, h4, h5 { color: #333; }
+        .stButton > button, .stDownloadButton > button { background-color: #007bff; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 0.3rem; font-size: 1rem; transition: background-color 0.3s ease; }
+        .stButton > button:hover, .stDownloadButton > button:hover { background-color: #0056b3; }
+        .css-1d391kg, .stTextInput, .stSelectbox, .stTextArea { border-radius: 4px; }
+        .stTextInput > label, .stSelectbox > label, .stTextArea > label { font-size: 0.9rem; font-weight: 600; }
+        .stExpander > label { font-size: 0.95rem; font-weight: 700; }
+        .stTabs [role="tab"] { font-weight: 600; }
+        header[data-testid="stHeader"] { background: #f8f9fa; }
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
@@ -872,7 +742,7 @@ def main() -> None:
         st.write("5. Use URI Dereferencing to load external RDF data by providing a list of URIs.")
         st.write("6. Explore the graph in the **Graph View** tab below!")
         st.write("7. Set manual node positions using the sidebar.")
-
+    
     if not ace_installed:
         st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
     
@@ -911,15 +781,18 @@ def main() -> None:
         st.session_state.property_filter = {"property": "", "value": ""}
     if "annotations" not in st.session_state:
         st.session_state.annotations = {}
+    if "graph_embeddings" not in st.session_state:
+        st.session_state.graph_embeddings = None
+    
+    # Fix: Use copy_graph to safely copy the RDF graph
+    if "rdf_graph" in st.session_state:
+        original_graph = copy_graph(st.session_state.rdf_graph)
+        st.session_state.original_graph = original_graph
     
     # Sidebar: File Upload and RDF Ingestion
     with st.sidebar.expander("File Upload"):
-        uploaded_files = st.sidebar.file_uploader(
-            label="Upload JSON/RDF Files",
-            type=["json", "jsonld", "ttl", "rdf", "nt"],
-            accept_multiple_files=True,
-            help="Select files describing entities and relationships"
-        )
+        uploaded_files = st.sidebar.file_uploader("Upload JSON/RDF Files", type=["json", "jsonld", "ttl", "rdf", "nt"],
+                                                    accept_multiple_files=True, help="Select files describing entities and relationships")
         if uploaded_files:
             file_contents = []
             all_errors = []
@@ -944,7 +817,6 @@ def main() -> None:
                 with st.expander("Data Validation"):
                     for error in errors + all_errors:
                         st.error(error)
-        
         st.markdown("---")
         st.subheader("Remote SPARQL Endpoint")
         endpoint_url = st.text_input("Enter SPARQL Endpoint URL", key="sparql_endpoint_url")
@@ -961,7 +833,6 @@ def main() -> None:
                     st.session_state.rdf_graph = convert_graph_data_to_rdf(remote_graph)
                 except Exception as e:
                     st.error(f"Error converting SPARQL data to RDF: {e}")
-        
         st.markdown("---")
         st.subheader("SHACL Validation")
         if st.sidebar.checkbox("Upload SHACL Shapes for Validation"):
@@ -974,7 +845,6 @@ def main() -> None:
                     st.text(report)
                 else:
                     st.success("SHACL Validation Passed!")
-        
         st.markdown("---")
         st.subheader("URI Dereferencing")
         if st.sidebar.checkbox("Enable URI Dereferencing"):
@@ -994,8 +864,7 @@ def main() -> None:
                     st.success("Dereferenced URIs added to the RDF graph!")
                     for msg in messages:
                         st.info(msg)
-    
-    # Sidebar: Reasoning and Ontology Suggestions
+    # Sidebar: Semantic Enhancements
     with st.sidebar.expander("Semantic Enhancements"):
         if st.sidebar.checkbox("Enable RDFS Reasoning"):
             if "rdf_graph" in st.session_state:
@@ -1009,7 +878,6 @@ def main() -> None:
                     st.info("Suggested ontologies: " + ", ".join(suggestions))
                 else:
                     st.info("No ontology suggestions available.")
-    
     # Sidebar: Visualization Settings
     with st.sidebar.expander("Visualization Settings"):
         community_detection = st.checkbox("Enable Community Detection", value=False, key="community_detection")
@@ -1029,12 +897,16 @@ def main() -> None:
             st.session_state.physics_params["centralGravity"] = st.number_input("Central Gravity", value=st.session_state.physics_params.get("centralGravity", CONFIG["PHYSICS_DEFAULTS"]["centralGravity"]), step=0.01, key="centralGravity_input")
             st.session_state.physics_params["springLength"] = st.number_input("Spring Length", value=float(st.session_state.physics_params.get("springLength", CONFIG["PHYSICS_DEFAULTS"]["springLength"])), step=1.0, key="springLength_input")
             st.session_state.physics_params["springStrength"] = st.number_input("Spring Strength", value=st.session_state.physics_params.get("springStrength", CONFIG["PHYSICS_DEFAULTS"]["springStrength"]), step=0.01, key="springStrength_input")
-        
         enable_centrality = st.checkbox("Display Centrality Measures", value=False, key="centrality_enabled")
         if enable_centrality and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")
-    
+    # Sidebar: Graph Embeddings
+    with st.sidebar.expander("Graph Embeddings"):
+        if st.button("Compute Graph Embeddings"):
+            embeddings = compute_probabilistic_graph_embeddings(st.session_state.graph_data)
+            st.session_state.graph_embeddings = embeddings
+            st.success("Graph Embeddings computed!")
     # Sidebar: Node Annotations
     with st.sidebar.expander("Node Annotations"):
         st.write("Select a node and add your annotation below:")
@@ -1050,7 +922,6 @@ def main() -> None:
                         break
         else:
             st.info("No nodes available for annotation.")
-    
     # Sidebar: Graph Pathfinding
     with st.sidebar.expander("Graph Pathfinding"):
         if st.session_state.graph_data.nodes:
@@ -1073,7 +944,6 @@ def main() -> None:
                     st.error(f"Pathfinding failed: {e}")
         else:
             st.info("No nodes available for pathfinding.")
-    
     # Sidebar: Graph Editing
     with st.sidebar.expander("Graph Editing"):
         ge_tabs = st.tabs(["Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"])
@@ -1085,12 +955,8 @@ def main() -> None:
                 if st.form_submit_button("Add Node"):
                     if new_label:
                         nid = f"node_{int(time.time())}"
-                        new_node = Node(
-                            id=nid,
-                            label=new_label,
-                            types=[new_type],
-                            metadata={"id": nid, "prefLabel": {"en": new_label}, "type": [new_type]}
-                        )
+                        new_node = Node(id=nid, label=new_label, types=[new_type],
+                                        metadata={"id": nid, "prefLabel": {"en": new_label}, "type": [new_type]})
                         st.session_state.graph_data.nodes.append(new_node)
                         st.session_state.id_to_label[nid] = new_label
                         st.success(f"Node '{new_label}' added!")
@@ -1117,7 +983,9 @@ def main() -> None:
                     with st.form("modify_node_form"):
                         new_label = st.text_input("New Label", node_obj.label)
                         current_type = node_obj.types[0] if node_obj.types else "Unknown"
-                        new_type = st.selectbox("New Type", list(CONFIG["NODE_TYPE_COLORS"].keys()), index=(list(CONFIG["NODE_TYPE_COLORS"].keys()).index(current_type) if current_type in CONFIG["NODE_TYPE_COLORS"] else 0))
+                        new_type = st.selectbox("New Type", list(CONFIG["NODE_TYPE_COLORS"].keys()),
+                                                index=(list(CONFIG["NODE_TYPE_COLORS"].keys()).index(current_type)
+                                                       if current_type in CONFIG["NODE_TYPE_COLORS"] else 0))
                         if st.form_submit_button("Modify Node"):
                             node_obj.label = new_label
                             node_obj.types = [new_type]
@@ -1153,7 +1021,6 @@ def main() -> None:
                     st.success("Edge deleted.")
             else:
                 st.info("No edges to delete.")
-    
     # Sidebar: Manual Node Positioning
     with st.sidebar.expander("Manual Node Positioning"):
         if st.session_state.graph_data.nodes:
@@ -1167,7 +1034,6 @@ def main() -> None:
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[sel_node] = {"x": x_val, "y": y_val}
                     st.success(f"Position for '{unique_nodes[sel_node]}' set to (X: {x_val}, Y: {y_val})")
-    
     # Sidebar: Advanced Filtering
     with st.sidebar.expander("Advanced Filtering"):
         st.subheader("Property-based Filtering")
@@ -1186,8 +1052,8 @@ def main() -> None:
         unique_types = sorted({t for n in st.session_state.graph_data.nodes for t in n.types})
         chosen_types = st.multiselect("Select Node Types", options=unique_types, default=unique_types, key="filter_node_types")
         st.session_state.filtered_types = chosen_types
-    
-    st.session_state.sparql_query = st.sidebar.text_area("SPARQL Query", help="Enter a SPARQL SELECT query to filter nodes.", key="sparql_query_control", value=st.session_state.sparql_query)
+    st.session_state.sparql_query = st.sidebar.text_area("SPARQL Query", help="Enter a SPARQL SELECT query to filter nodes.",
+                                                         key="sparql_query_control", value=st.session_state.sparql_query)
     if st.session_state.sparql_query.strip():
         st.sidebar.info("Query Running...")
         try:
@@ -1202,8 +1068,9 @@ def main() -> None:
     if st.session_state.filtered_types:
         filter_by_type = {n.id for n in st.session_state.graph_data.nodes if any(t in st.session_state.filtered_types for t in n.types)}
         filtered_nodes = filtered_nodes.intersection(filter_by_type) if filtered_nodes is not None else filter_by_type
+    # Create tabs
+    tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "Original Graph", "Graph Embeddings", "Node Similarity Search", "About"])
     
-    tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "About"])
     with tabs[0]:
         st.header("Network Graph")
         if st.session_state.graph_data.nodes:
@@ -1217,18 +1084,11 @@ def main() -> None:
                     val = st.session_state.property_filter["value"].lower()
                     prop_nodes = {n.id for n in st.session_state.graph_data.nodes if prop in n.metadata and val in str(n.metadata[prop]).lower()}
                     filtered_nodes = filtered_nodes.intersection(prop_nodes) if filtered_nodes is not None else prop_nodes
-                net = build_graph(
-                    graph_data=st.session_state.graph_data,
-                    id_to_label=st.session_state.id_to_label,
-                    selected_relationships=st.session_state.selected_relationships,
-                    search_nodes=search_nodes,
-                    node_positions=st.session_state.node_positions,
-                    show_labels=st.session_state.show_labels,
-                    filtered_nodes=filtered_nodes,
-                    community_detection=community_detection,
-                    centrality=st.session_state.centrality_measures,
-                    path_nodes=st.session_state.shortest_path
-                )
+                net = build_graph(graph_data=st.session_state.graph_data, id_to_label=st.session_state.id_to_label,
+                                  selected_relationships=st.session_state.selected_relationships, search_nodes=search_nodes,
+                                  node_positions=st.session_state.node_positions, show_labels=st.session_state.show_labels,
+                                  filtered_nodes=filtered_nodes, community_detection=community_detection,
+                                  centrality=st.session_state.centrality_measures, path_nodes=st.session_state.shortest_path)
             if community_detection:
                 st.info("Community detection applied to node colors.")
             if len(net.nodes) > 50 and st.session_state.show_labels:
@@ -1290,7 +1150,8 @@ def main() -> None:
             st.subheader("IIIF Viewer")
             iiif_nodes = [n for n in st.session_state.graph_data.nodes if isinstance(n.metadata, dict) and ("image" in n.metadata or "manifest" in n.metadata)]
             if iiif_nodes:
-                sel_iiif = st.selectbox("Select an entity with a manifest for IIIF Viewer", [n.id for n in iiif_nodes], format_func=lambda x: st.session_state.id_to_label.get(x, x))
+                sel_iiif = st.selectbox("Select an entity with a manifest for IIIF Viewer", [n.id for n in iiif_nodes],
+                                          format_func=lambda x: st.session_state.id_to_label.get(x, x))
                 node_iiif = next((n for n in iiif_nodes if n.id == sel_iiif), None)
                 if node_iiif:
                     manifest_url = node_iiif.metadata.get("image") or node_iiif.metadata.get("manifest")
@@ -1438,6 +1299,59 @@ def main() -> None:
             st.info("No timeline data available.")
     
     with tabs[5]:
+        st.header("Original RDF Graph")
+        if "original_graph" in st.session_state:
+            try:
+                serialized = st.session_state.original_graph.serialize(format="turtle")
+                try:
+                    serialized_str = serialized.decode("utf-8")
+                except AttributeError:
+                    serialized_str = serialized
+                st.code(serialized_str, language="turtle")
+            except Exception as e:
+                st.error(f"Failed to serialize original graph: {e}")
+        else:
+            st.info("No original graph available.")
+    
+    with tabs[6]:
+        st.header("Graph Embeddings")
+        if st.session_state.graph_embeddings:
+            emb = st.session_state.graph_embeddings
+            emb_data = []
+            for node, vec in emb.items():
+                emb_data.append({"Node": node, "Embedding": ", ".join(f"{x:.3f}" for x in vec[:5]) + " ..."})  # showing first 5 dimensions
+            df_emb = pd.DataFrame(emb_data)
+            st.dataframe(df_emb)
+            csv_data = df_emb.to_csv(index=False).encode("utf-8")
+            st.download_button("Download Embeddings as CSV", data=csv_data, file_name="graph_embeddings.csv", mime="text/csv")
+        else:
+            st.info("Graph embeddings not computed yet. Use the sidebar to compute them.")
+    
+    with tabs[7]:
+        st.header("Node Similarity Search")
+        if st.session_state.graph_embeddings:
+            embeddings = st.session_state.graph_embeddings
+            node_list = list(embeddings.keys())
+            selected_node = st.selectbox("Select a node to find similar nodes", node_list, format_func=lambda x: st.session_state.id_to_label.get(x, x))
+            if selected_node:
+                selected_vector = np.array(embeddings[selected_node])
+                similarities = {}
+                for node, vector in embeddings.items():
+                    if node == selected_node:
+                        continue
+                    vec = np.array(vector)
+                    sim = np.dot(selected_vector, vec) / (np.linalg.norm(selected_vector) * np.linalg.norm(vec))
+                    similarities[node] = sim
+                sorted_sim = sorted(similarities.items(), key=lambda x: x[1], reverse=True)
+                df_sim = pd.DataFrame(sorted_sim, columns=["Node", "Cosine Similarity"]).head(10)
+                df_sim["Node Label"] = df_sim["Node"].map(lambda x: st.session_state.id_to_label.get(x, x))
+                st.dataframe(df_sim)
+            else:
+                st.info("Select a node to search for similar nodes.")
+        else:
+            st.info("Please compute the graph embeddings first using the sidebar!")
+    
+    with tabs[8]:
         st.header("About Linked Data Explorer")
         st.markdown(
             """
@@ -1453,9 +1367,11 @@ def main() -> None:
             - **Ontology Suggestions:** Get ontology suggestions based on your data.
             - **Advanced SPARQL Querying:** Run complex queries with syntax highlighting.
             - **Semantic Graph Visualization:** Nodes and edges are styled based on RDF types and properties.
+            - **Graph Embeddings:** Integrated probabilistic graph embedding model (via node2vec) for learning latent node representations.
+            - **Node Similarity Search:** Find similar nodes based on cosine similarity of embeddings.
             - **Pathfinding, Node Annotations, and Graph Editing:** Interactive tools for network exploration.
             
-            **Version:** 2.1.0  
+            **Version:** 2.1.3  
             **Author:** Huw Sandaver (Refactored by ChatGPT)  
             **Contact:** hsandaver@alumni.unimelb.edu.au
             
@@ -1493,13 +1409,8 @@ def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str],
                 nodes_dict[s]["prefLabel"] = {"en": o}
         nodes = []
         for s, data in nodes_dict.items():
-            node = Node(
-                id=data["id"],
-                label=data["prefLabel"]["en"],
-                types=data.get("type", ["Unknown"]),
-                metadata=data["metadata"],
-                edges=[]
-            )
+            node = Node(id=data["id"], label=data["prefLabel"]["en"], types=data.get("type", ["Unknown"]),
+                        metadata=data["metadata"], edges=[])
             nodes.append(node)
             id_to_label[s] = data["prefLabel"]["en"]
         graph_data = GraphData(nodes=nodes)

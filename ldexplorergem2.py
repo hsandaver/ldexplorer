@@ -708,6 +708,9 @@ def create_legends(rel_colors: Dict[str, str], node_colors: Dict[str, str]) -> s
     return f"<h4>Legends</h4><div style='display:flex;'><ul style='list-style: none; padding: 0; margin-right: 20px;'><strong>Relationships</strong>{rel_items}</ul><ul style='list-style: none; padding: 0;'><strong>Node Types</strong>{node_items}</ul></div>"
 
 def main() -> None:
+    # Set the page configuration to wide mode
+    st.set_page_config(page_title="Linked Data Explorer", layout="wide")
+    
     custom_css = """
     <style>
         .stApp { max-width: 1600px; padding: 1rem; background-color: #fafafa; color: #343a40; }

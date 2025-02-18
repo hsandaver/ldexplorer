@@ -50,13 +50,6 @@ try:
 except ImportError:
     louvain_installed = False
 
-# Optional SPARQL syntax highlighting in Streamlit
-try:
-    from streamlit_ace import st_ace
-    ace_installed = True
-except ImportError:
-    ace_installed = False
-
 # Optional SHACL validation and reasoning libraries
 try:
     from pyshacl import validate
@@ -574,7 +567,6 @@ def add_edge(net: Network, src: str, dst: str, relationship: str, id_to_label: D
                  font={"size": 10 if is_search_edge else 8, "align": "middle"}, smooth={'enabled': True, 'type': 'continuous'})
     logging.debug(f"Added edge: {src} --{label_text}--> {dst}")
 
-# Use st.cache_resource for build_graph since pyvis.Network is unserializable.
 @st.cache_resource(show_spinner=False)
 @profile_time
 def build_graph(graph_data: GraphData, id_to_label: Dict[str, str], selected_relationships: List[str],
@@ -743,9 +735,6 @@ def main() -> None:
         st.write("6. Explore the graph in the **Graph View** tab below!")
         st.write("7. Set manual node positions using the sidebar.")
     
-    if not ace_installed:
-        st.sidebar.info("streamlit-ace not installed; SPARQL syntax highlighting will be disabled.")
-    
     # Initialize session state variables
     if "node_positions" not in st.session_state:
         st.session_state.node_positions = {}
@@ -783,11 +772,6 @@ def main() -> None:
         st.session_state.annotations = {}
     if "graph_embeddings" not in st.session_state:
         st.session_state.graph_embeddings = None
-    
-    # Fix: Use copy_graph to safely copy the RDF graph
-    if "rdf_graph" in st.session_state:
-        original_graph = copy_graph(st.session_state.rdf_graph)
-        st.session_state.original_graph = original_graph
     
     # Sidebar: File Upload and RDF Ingestion
     with st.sidebar.expander("File Upload"):
@@ -1068,8 +1052,8 @@ def main() -> None:
     if st.session_state.filtered_types:
         filter_by_type = {n.id for n in st.session_state.graph_data.nodes if any(t in st.session_state.filtered_types for t in n.types)}
         filtered_nodes = filtered_nodes.intersection(filter_by_type) if filtered_nodes is not None else filter_by_type
-    # Create tabs
-    tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "Original Graph", "Graph Embeddings", "Node Similarity Search", "About"])
+    # Create tabs (removed the Original Graph tab)
+    tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "Graph Embeddings", "Node Similarity Search", "About"])
     
     with tabs[0]:
         st.header("Network Graph")
@@ -1299,21 +1283,6 @@ def main() -> None:
             st.info("No timeline data available.")
     
     with tabs[5]:
-        st.header("Original RDF Graph")
-        if "original_graph" in st.session_state:
-            try:
-                serialized = st.session_state.original_graph.serialize(format="turtle")
-                try:
-                    serialized_str = serialized.decode("utf-8")
-                except AttributeError:
-                    serialized_str = serialized
-                st.code(serialized_str, language="turtle")
-            except Exception as e:
-                st.error(f"Failed to serialize original graph: {e}")
-        else:
-            st.info("No original graph available.")
-    
-    with tabs[6]:
         st.header("Graph Embeddings")
         if st.session_state.graph_embeddings:
             emb = st.session_state.graph_embeddings
@@ -1327,7 +1296,7 @@ def main() -> None:
         else:
             st.info("Graph embeddings not computed yet. Use the sidebar to compute them.")
     
-    with tabs[7]:
+    with tabs[6]:
         st.header("Node Similarity Search")
         if st.session_state.graph_embeddings:
             embeddings = st.session_state.graph_embeddings
@@ -1351,7 +1320,7 @@ def main() -> None:
         else:
             st.info("Please compute the graph embeddings first using the sidebar!")
     
-    with tabs[8]:
+    with tabs[7]:
         st.header("About Linked Data Explorer")
         st.markdown(
             """
@@ -1365,7 +1334,7 @@ def main() -> None:
             - **URI Dereferencing:** Fetch and integrate external RDF data.
             - **RDFS Reasoning:** Infer implicit relationships using basic RDFS reasoning.
             - **Ontology Suggestions:** Get ontology suggestions based on your data.
-            - **Advanced SPARQL Querying:** Run complex queries with syntax highlighting.
+            - **Advanced SPARQL Querying:** Run complex queries.
             - **Semantic Graph Visualization:** Nodes and edges are styled based on RDF types and properties.
             - **Graph Embeddings:** Integrated probabilistic graph embedding model (via node2vec) for learning latent node representations.
             - **Node Similarity Search:** Find similar nodes based on cosine similarity of embeddings.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
 Linked Data Explorer - Refactored for Scientific Rigor with Enhanced Linked Data Features,
-Integrated Probabilistic Graph Embedding Model, and Node Similarity Search
+Integrated Probabilistic Graph Embedding Model, Node Similarity Search, and Additional Semantic Analysis
 Author: Huw Sandaver (Refactored by ChatGPT)
-Version: 2.1.3
+Version: 2.1.4
 Date: 2025-02-18
 
 Description:
@@ -11,7 +11,8 @@ This code implements a modular, robust, and reproducible pipeline for exploring 
 It includes enhanced data ingestion (support for RDF formats, SHACL validation, URI dereferencing),
 basic RDF reasoning, ontology suggestions, schema mapping stubs, advanced SPARQL querying, enriched graph
 visualization with semantic styling, an integrated probabilistic graph embedding model (via node2vec),
-and a new Node Similarity Search tab that computes cosine similarity between node embeddings.
+a new Node Similarity Search tab that computes cosine similarity between node embeddings, and now,
+textual semantic analysis using SentenceTransformer.
 """
 
 # ------------------------------
@@ -68,6 +69,15 @@ try:
     node2vec_installed = True
 except ImportError:
     node2vec_installed = False
+
+# ------------------------------
+# NEW: Optional SentenceTransformer for Textual Semantic Analysis
+# ------------------------------
+try:
+    from sentence_transformers import SentenceTransformer
+    sentence_transformer_installed = True
+except ImportError:
+    sentence_transformer_installed = False
 
 # ------------------------------
 # Configuration and Constants
@@ -530,6 +540,32 @@ def compute_probabilistic_graph_embeddings(graph_data: GraphData, dimensions=64,
     return embeddings
 
 # ------------------------------
+# NEW: Textual Semantic Analysis Function
+# ------------------------------
+@st.cache_data(show_spinner=False)
+@profile_time
+def compute_textual_semantic_embeddings(graph_data: GraphData) -> Dict[str, List[float]]:
+    if not sentence_transformer_installed:
+        logging.error("SentenceTransformer library not installed. Returning dummy embeddings.")
+        # Return a dummy embedding (e.g., zero vector of dimension 768)
+        return {node.id: [0.0]*768 for node in graph_data.nodes}
+    # Initialize the SentenceTransformer model (using a lightweight model for speed)
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    embeddings = {}
+    for node in graph_data.nodes:
+        # Use the 'description' if available; otherwise, fall back to the node label.
+        text = ""
+        if isinstance(node.metadata.get("description"), dict):
+            text = node.metadata.get("description", {}).get("en", "")
+        elif isinstance(node.metadata.get("description"), str):
+            text = node.metadata.get("description")
+        if not text:
+            text = node.label
+        embeddings[node.id] = model.encode(text).tolist()
+    logging.info("Textual Semantic Embeddings computed for all nodes.")
+    return embeddings
+
+# ------------------------------
 # Graph Building and Visualization
 # ------------------------------
 def add_node(net: Network, node_id: str, label: str, entity_types: List[str], metadata: Dict[str, Any],
@@ -775,6 +811,9 @@ def main() -> None:
         st.session_state.annotations = {}
     if "graph_embeddings" not in st.session_state:
         st.session_state.graph_embeddings = None
+    # NEW: For storing textual semantic embeddings
+    if "textual_semantic_embeddings" not in st.session_state:
+        st.session_state.textual_semantic_embeddings = None
     
     # Sidebar: File Upload and RDF Ingestion
     with st.sidebar.expander("File Upload"):
@@ -1301,8 +1340,30 @@ def main() -> None:
     
     with tabs[6]:
         st.header("Node Similarity Search")
-        if st.session_state.graph_embeddings:
-            embeddings = st.session_state.graph_embeddings
+        # NEW: Similarity type selection – choose between Graph Embedding and Textual Semantic analysis
+        similarity_type = st.selectbox("Select Similarity Type", ["Graph Embedding", "Textual Semantic"])
+        if similarity_type == "Graph Embedding":
+            if st.session_state.graph_embeddings:
+                embeddings = st.session_state.graph_embeddings
+            else:
+                st.info("Please compute the graph embeddings first using the sidebar!")
+                embeddings = None
+        else:
+            if not sentence_transformer_installed:
+                st.error("SentenceTransformer is not installed. Install it to use Textual Semantic Similarity analysis.")
+                embeddings = None
+            else:
+                if st.session_state.textual_semantic_embeddings is None:
+                    if st.button("Compute Textual Semantic Embeddings"):
+                        embeddings = compute_textual_semantic_embeddings(st.session_state.graph_data)
+                        st.session_state.textual_semantic_embeddings = embeddings
+                        st.success("Textual Semantic Embeddings computed!")
+                    else:
+                        embeddings = None
+                else:
+                    embeddings = st.session_state.textual_semantic_embeddings
+
+        if embeddings:
             node_list = list(embeddings.keys())
             selected_node = st.selectbox("Select a node to find similar nodes", node_list, format_func=lambda x: st.session_state.id_to_label.get(x, x))
             if selected_node:
@@ -1321,7 +1382,7 @@ def main() -> None:
             else:
                 st.info("Select a node to search for similar nodes.")
         else:
-            st.info("Please compute the graph embeddings first using the sidebar!")
+            st.info("No embeddings available for similarity search. Please compute the required embeddings above!")
     
     with tabs[7]:
         st.header("About Linked Data Explorer")
@@ -1340,10 +1401,11 @@ def main() -> None:
             - **Advanced SPARQL Querying:** Run complex queries.
             - **Semantic Graph Visualization:** Nodes and edges are styled based on RDF types and properties.
             - **Graph Embeddings:** Integrated probabilistic graph embedding model (via node2vec) for learning latent node representations.
-            - **Node Similarity Search:** Find similar nodes based on cosine similarity of embeddings.
+            - **Textual Semantic Analysis:** Compute text-based semantic embeddings for nodes using SentenceTransformer.
+            - **Node Similarity Search:** Find similar nodes based on cosine similarity of embeddings (choose between graph or textual semantics).
             - **Pathfinding, Node Annotations, and Graph Editing:** Interactive tools for network exploration.
             
-            **Version:** 2.1.3  
+            **Version:** 2.1.4  
             **Author:** Huw Sandaver (Refactored by ChatGPT)  
             **Contact:** hsandaver@alumni.unimelb.edu.au
             

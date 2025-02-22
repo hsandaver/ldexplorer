@@ -115,7 +115,8 @@ CONFIG = {
         "containedInPlace": "#F39C12",
         "owner": "#3498DB",
         "isPartOf": "#B39DDB",
-        "relatedPlace": "#A3E4D7"
+        "relatedPlace": "#A3E4D7",
+        "analysisOf": "#8B0000"
     },
     "NODE_TYPE_COLORS": {
         "Person": "#FFA500",

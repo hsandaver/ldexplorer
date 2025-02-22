@@ -13,3 +13,4 @@ pyshacl>=0.20.0
 owlrl>=6.0.0
 git+https://github.com/eliorc/node2vec.git@v0.5.0#egg=node2vec
 plotly_resampler>=0.6.0
+sentence-transformers>=2.2.2

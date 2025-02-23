@@ -116,7 +116,8 @@ CONFIG = {
         "owner": "#3498DB",
         "isPartOf": "#B39DDB",
         "relatedPlace": "#A3E4D7",
-        "analysisOf": "#8B0000"
+        "analysisOf": "#8B0000",
+        "dedicatee": "#1ABC9C"
     },
     "NODE_TYPE_COLORS": {
         "Person": "#FFA500",

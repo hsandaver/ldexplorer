@@ -313,32 +313,34 @@ def validate_with_shacl(rdf_graph: RDFGraph, shacl_data: str, shacl_format: str 
 
 def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
     try:
+        # Set Accept header to prefer machine-readable RDF formats in order of preference.
         headers = {
-            "Accept": "application/rdf+xml, text/turtle, application/ld+json, text/plain"
+            "Accept": "application/ld+json, application/rdf+xml, text/turtle, application/n-triples;q=0.9"
         }
-        # Use the URI directly, without appending any extra parameters.
         response = requests.get(uri, headers=headers, timeout=10)
         response.raise_for_status()
-        content_type = response.headers.get("Content-Type", "")
-        if "xml" in content_type:
-            fmt = "xml"
-        elif "turtle" in content_type or uri.endswith(".ttl"):
-            fmt = "turtle"
-        elif "n-triples" in content_type or uri.endswith(".nt"):
-            fmt = "nt"
-        elif "json" in content_type:
+        content_type = response.headers.get("Content-Type", "").lower()
+        
+        # Determine the RDF format based on the Content-Type header or file extension.
+        if "application/ld+json" in content_type:
             fmt = "json-ld"
-        else:
+        elif "application/rdf+xml" in content_type:
             fmt = "xml"
+        elif "text/turtle" in content_type or uri.endswith(".ttl"):
+            fmt = "turtle"
+        elif "application/n-triples" in content_type or uri.endswith(".nt"):
+            fmt = "nt"
+        else:
+            # Fallback to RDF/XML if no known MIME type is found.
+            fmt = "xml"
+        
         new_graph = RDFGraph()
         new_graph.parse(data=response.text, format=fmt)
-        count = len(new_graph)
-        logging.info(f"URI '{uri}' dereferencing fetched {count} triple(s).")
-        for triple in new_graph:
-            logging.debug(f"Fetched triple: {triple}")
-        return new_graph, count
+        triple_count = len(new_graph)
+        logging.info(f"Successfully dereferenced URI '{uri}' with {triple_count} triple(s) (format: {fmt}).")
+        return new_graph, triple_count
     except Exception as e:
-        logging.error(f"URI dereferencing failed for {uri}: {e}")
+        logging.error(f"Error dereferencing URI '{uri}': {e}")
         return None
 
 def apply_rdfs_reasoning(rdf_graph: RDFGraph) -> Tuple[RDFGraph, int]:

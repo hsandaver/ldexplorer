@@ -313,7 +313,10 @@ def validate_with_shacl(rdf_graph: RDFGraph, shacl_data: str, shacl_format: str 
 
 def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
     try:
-        headers = {"Accept": "application/rdf+xml, text/turtle, application/ld+json, text/plain"}
+        headers = {
+            "Accept": "application/rdf+xml, text/turtle, application/ld+json, text/plain"
+        }
+        # Use the URI directly, without appending any extra parameters.
         response = requests.get(uri, headers=headers, timeout=10)
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "")

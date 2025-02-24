@@ -117,7 +117,8 @@ CONFIG = {
         "isPartOf": "#B39DDB",
         "relatedPlace": "#A3E4D7",
         "analysisOf": "#8B0000",
-        "dedicatee": "#1ABC9C"
+        "dedicatee": "#1ABC9C",
+        "illustrator": "#8B5A2B"
     },
     "NODE_TYPE_COLORS": {
         "Person": "#FFA500",

@@ -25,7 +25,7 @@ import traceback
 import time
 import functools
 import re
-from urllib.parse import urlparse, urlunparse, parse_qs  # Added parse_qs for query extraction
+from urllib.parse import urlparse, urlunparse, parse_qs
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
@@ -41,17 +41,14 @@ import requests
 from dateutil.parser import parse as parse_date
 import plotly.express as px
 
-# Import t-SNE from scikit-learn for potential future use
 from sklearn.manifold import TSNE
 
-# Optional community detection (Louvain)
 try:
     import community.community_louvain as community_louvain
     louvain_installed = True
 except ImportError:
     louvain_installed = False
 
-# Optional SHACL validation and reasoning libraries
 try:
     from pyshacl import validate
     pyshacl_installed = True
@@ -63,16 +60,12 @@ try:
 except ImportError:
     owlrl_installed = False
 
-# Optional Node2Vec for probabilistic graph embedding
 try:
     from node2vec import Node2Vec
     node2vec_installed = True
 except ImportError:
     node2vec_installed = False
 
-# ------------------------------
-# NEW: Optional SentenceTransformer for Textual Semantic Analysis
-# ------------------------------
 try:
     from sentence_transformers import SentenceTransformer
     sentence_transformer_installed = True
@@ -150,7 +143,6 @@ CONFIG = {
 }
 EX = Namespace(CONFIG["NAMESPACE"])
 
-# Logging configuration
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ------------------------------
@@ -237,10 +229,8 @@ def is_valid_iiif_manifest(url: str) -> bool:
         parsed = urlparse(url)
         if parsed.scheme not in ["http", "https"]:
             return False
-        # Check if the path indicates a manifest
         if parsed.path.endswith("manifest") or parsed.path.endswith("manifest.json"):
             return True
-        # Alternatively, if a 'manifest' query parameter exists, assume it's a valid manifest URL
         query_params = parse_qs(parsed.query)
         if 'manifest' in query_params:
             return True
@@ -326,15 +316,12 @@ def validate_with_shacl(rdf_graph: RDFGraph, shacl_data: str, shacl_format: str 
 
 def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
     try:
-        # Set Accept header to prefer machine-readable RDF formats in order of preference.
         headers = {
             "Accept": "application/ld+json, application/rdf+xml, text/turtle, application/n-triples;q=0.9"
         }
         response = requests.get(uri, headers=headers, timeout=10)
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "").lower()
-        
-        # Determine the RDF format based on the Content-Type header or file extension.
         if "application/ld+json" in content_type:
             fmt = "json-ld"
         elif "application/rdf+xml" in content_type:
@@ -344,9 +331,7 @@ def dereference_uri(uri: str) -> Optional[Tuple[RDFGraph, int]]:
         elif "application/n-triples" in content_type or uri.endswith(".nt"):
             fmt = "nt"
         else:
-            # Fallback to RDF/XML if no known MIME type is found.
             fmt = "xml"
-        
         new_graph = RDFGraph()
         new_graph.parse(data=response.text, format=fmt)
         triple_count = len(new_graph)
@@ -535,9 +520,6 @@ def get_edge_relationship(source: str, target: str, graph_data: GraphData) -> Li
                     relationships.append(edge.relationship)
     return relationships
 
-# ------------------------------
-# Integrated Probabilistic Graph Embedding Model
-# ------------------------------
 @st.cache_data(show_spinner=False)
 @profile_time
 def compute_probabilistic_graph_embeddings(graph_data: GraphData, dimensions=64, walk_length=30, num_walks=200, p=1, q=1, workers=4) -> Dict[str, List[float]]:
@@ -558,21 +540,15 @@ def compute_probabilistic_graph_embeddings(graph_data: GraphData, dimensions=64,
     logging.info("Probabilistic Graph Embeddings computed for all nodes.")
     return embeddings
 
-# ------------------------------
-# NEW: Textual Semantic Analysis Function
-# ------------------------------
 @st.cache_data(show_spinner=False)
 @profile_time
 def compute_textual_semantic_embeddings(graph_data: GraphData) -> Dict[str, List[float]]:
     if not sentence_transformer_installed:
         logging.error("SentenceTransformer library not installed. Returning dummy embeddings.")
-        # Return a dummy embedding (e.g., zero vector of dimension 768)
         return {node.id: [0.0]*768 for node in graph_data.nodes}
-    # Initialize the SentenceTransformer model (using a lightweight model for speed)
     model = SentenceTransformer('all-MiniLM-L6-v2')
     embeddings = {}
     for node in graph_data.nodes:
-        # Use the 'description' if available; otherwise, fall back to the node label.
         text = ""
         if isinstance(node.metadata.get("description"), dict):
             text = node.metadata.get("description", {}).get("en", "")
@@ -584,9 +560,6 @@ def compute_textual_semantic_embeddings(graph_data: GraphData) -> Dict[str, List
     logging.info("Textual Semantic Embeddings computed for all nodes.")
     return embeddings
 
-# ------------------------------
-# Graph Building and Visualization
-# ------------------------------
 def add_node(net: Network, node_id: str, label: str, entity_types: List[str], metadata: Dict[str, Any],
              search_nodes: Optional[List[str]] = None, show_labels: bool = True, custom_size: Optional[int] = None) -> None:
     if any("foaf" in t.lower() for t in entity_types):
@@ -754,18 +727,13 @@ def convert_graph_to_jsonld(net: Network) -> Dict[str, Any]:
     return {"@context": {"label": "http://www.w3.org/2000/01/rdf-schema#label", "x": "http://example.org/x", "y": "http://example.org/y", "type": "@type", "ex": "http://example.org/"},
             "@graph": list(nodes_dict.values())}
 
-# ------------------------------
-# Streamlit UI and Main Function
-# ------------------------------
 def create_legends(rel_colors: Dict[str, str], node_colors: Dict[str, str]) -> str:
     rel_items = "".join(f"<li><span style='color:{color}; font-size: 16px;'>●</span> {rel.replace('_', ' ').title()}</li>" for rel, color in rel_colors.items())
     node_items = "".join(f"<li><span style='color:{color}; font-size: 16px;'>●</span> {ntype}</li>" for ntype, color in node_colors.items())
     return f"<h4>Legends</h4><div style='display:flex;'><ul style='list-style: none; padding: 0; margin-right: 20px;'><strong>Relationships</strong>{rel_items}</ul><ul style='list-style: none; padding: 0;'><strong>Node Types</strong>{node_items}</ul></div>"
 
 def main() -> None:
-    # Set the page configuration to wide mode
     st.set_page_config(page_title="Linked Data Explorer", layout="wide")
-    
     custom_css = """
     <style>
         .stApp { max-width: 1600px; padding: 1rem; background-color: #fafafa; color: #343a40; }
@@ -793,7 +761,6 @@ def main() -> None:
         st.write("6. Explore the graph in the **Graph View** tab below!")
         st.write("7. Set manual node positions using the sidebar.")
     
-    # Initialize session state variables
     if "node_positions" not in st.session_state:
         st.session_state.node_positions = {}
     if "selected_node" not in st.session_state:
@@ -830,11 +797,9 @@ def main() -> None:
         st.session_state.annotations = {}
     if "graph_embeddings" not in st.session_state:
         st.session_state.graph_embeddings = None
-    # NEW: For storing textual semantic embeddings
     if "textual_semantic_embeddings" not in st.session_state:
         st.session_state.textual_semantic_embeddings = None
     
-    # Sidebar: File Upload and RDF Ingestion
     with st.sidebar.expander("File Upload"):
         uploaded_files = st.sidebar.file_uploader("Upload JSON/RDF Files", type=["json", "jsonld", "ttl", "rdf", "nt"],
                                                     accept_multiple_files=True, help="Select files describing entities and relationships")
@@ -909,7 +874,6 @@ def main() -> None:
                     st.success("Dereferenced URIs added to the RDF graph!")
                     for msg in messages:
                         st.info(msg)
-    # Sidebar: Semantic Enhancements
     with st.sidebar.expander("Semantic Enhancements"):
         if st.sidebar.checkbox("Enable RDFS Reasoning"):
             if "rdf_graph" in st.session_state:
@@ -923,7 +887,6 @@ def main() -> None:
                     st.info("Suggested ontologies: " + ", ".join(suggestions))
                 else:
                     st.info("No ontology suggestions available.")
-    # Sidebar: Visualization Settings
     with st.sidebar.expander("Visualization Settings"):
         community_detection = st.checkbox("Enable Community Detection", value=False, key="community_detection")
         physics_presets = {
@@ -946,13 +909,11 @@ def main() -> None:
         if enable_centrality and st.session_state.graph_data.nodes:
             st.session_state.centrality_measures = compute_centrality_measures(st.session_state.graph_data)
             st.info("Centrality measures computed.")
-    # Sidebar: Graph Embeddings
     with st.sidebar.expander("Graph Embeddings"):
         if st.button("Compute Graph Embeddings"):
             embeddings = compute_probabilistic_graph_embeddings(st.session_state.graph_data)
             st.session_state.graph_embeddings = embeddings
             st.success("Graph Embeddings computed!")
-    # Sidebar: Node Annotations
     with st.sidebar.expander("Node Annotations"):
         st.write("Select a node and add your annotation below:")
         if st.session_state.graph_data.nodes:
@@ -967,7 +928,6 @@ def main() -> None:
                         break
         else:
             st.info("No nodes available for annotation.")
-    # Sidebar: Graph Pathfinding
     with st.sidebar.expander("Graph Pathfinding"):
         if st.session_state.graph_data.nodes:
             node_options = {n.id: st.session_state.id_to_label.get(n.id, n.id) for n in st.session_state.graph_data.nodes}
@@ -989,7 +949,6 @@ def main() -> None:
                     st.error(f"Pathfinding failed: {e}")
         else:
             st.info("No nodes available for pathfinding.")
-    # Sidebar: Graph Editing
     with st.sidebar.expander("Graph Editing"):
         ge_tabs = st.tabs(["Add Node", "Delete Node", "Modify Node", "Add Edge", "Delete Edge"])
         nodes_list = st.session_state.graph_data.nodes
@@ -1066,7 +1025,6 @@ def main() -> None:
                     st.success("Edge deleted.")
             else:
                 st.info("No edges to delete.")
-    # Sidebar: Manual Node Positioning
     with st.sidebar.expander("Manual Node Positioning"):
         if st.session_state.graph_data.nodes:
             unique_nodes = {n.id: n.label for n in st.session_state.graph_data.nodes}
@@ -1079,7 +1037,6 @@ def main() -> None:
                 if st.form_submit_button("Set Position"):
                     st.session_state.node_positions[sel_node] = {"x": x_val, "y": y_val}
                     st.success(f"Position for '{unique_nodes[sel_node]}' set to (X: {x_val}, Y: {y_val})")
-    # Sidebar: Advanced Filtering
     with st.sidebar.expander("Advanced Filtering"):
         st.subheader("Property-based Filtering")
         prop_name = st.text_input("Property Name", key="filter_prop_name")
@@ -1113,7 +1070,6 @@ def main() -> None:
     if st.session_state.filtered_types:
         filter_by_type = {n.id for n in st.session_state.graph_data.nodes if any(t in st.session_state.filtered_types for t in n.types)}
         filtered_nodes = filtered_nodes.intersection(filter_by_type) if filtered_nodes is not None else filter_by_type
-    # Create tabs (removed the Original Graph tab)
     tabs = st.tabs(["Graph View", "Data View", "Centrality Measures", "SPARQL Query", "Timeline", "Graph Embeddings", "Node Similarity Search", "About"])
     
     with tabs[0]:
@@ -1203,7 +1159,6 @@ def main() -> None:
                     if manifest_url:
                         if isinstance(manifest_url, list):
                             manifest_url = manifest_url[0]
-                        # Enhanced manifest URL extraction: if a 'manifest' query parameter exists, extract its value.
                         parsed_url = urlparse(manifest_url)
                         query_params = parse_qs(parsed_url.query)
                         if 'manifest' in query_params:
@@ -1213,8 +1168,8 @@ def main() -> None:
                             html_code = f'''
 <html>
   <head>
-    <link rel="stylesheet" href="https://unpkg.com/mirador@4.0.0-alpha.11/dist/css/mirador.min.css">
-    <script src="https://unpkg.com/mirador@4.0.0-alpha.11/dist/mirador.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/mirador@3.4.3/dist/mirador.min.css"/>
+    <script src="https://unpkg.com/mirador@3.4.3/dist/mirador.min.js"></script>
   </head>
   <body>
     <div id="mirador-viewer" style="height: 600px;"></div>
@@ -1223,7 +1178,7 @@ def main() -> None:
       console.log("Manifest URL:", manifestUrl);
       Mirador.viewer({{
         id: 'mirador-viewer',
-        windows: [{{ loadedManifest: manifestUrl }}]
+        windows: [{{ "loadedManifest": manifestUrl }}]
       }});
     </script>
   </body>
@@ -1351,7 +1306,7 @@ def main() -> None:
             emb = st.session_state.graph_embeddings
             emb_data = []
             for node, vec in emb.items():
-                emb_data.append({"Node": node, "Embedding": ", ".join(f"{x:.3f}" for x in vec[:5]) + " ..."})  # showing first 5 dimensions
+                emb_data.append({"Node": node, "Embedding": ", ".join(f"{x:.3f}" for x in vec[:5]) + " ..."})
             df_emb = pd.DataFrame(emb_data)
             st.dataframe(df_emb)
             csv_data = df_emb.to_csv(index=False).encode("utf-8")
@@ -1361,7 +1316,6 @@ def main() -> None:
     
     with tabs[6]:
         st.header("Node Similarity Search")
-        # NEW: Similarity type selection – choose between Graph Embedding and Textual Semantic analysis
         similarity_type = st.selectbox("Select Similarity Type", ["Graph Embedding", "Textual Semantic"])
         if similarity_type == "Graph Embedding":
             if st.session_state.graph_embeddings:
@@ -1434,9 +1388,6 @@ def main() -> None:
             """
         )
 
-# ------------------------------
-# Remote SPARQL Data Loader
-# ------------------------------
 def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str], List[str]]:
     errors = []
     nodes_dict = {}
@@ -1474,9 +1425,6 @@ def load_data_from_sparql(endpoint_url: str) -> Tuple[GraphData, Dict[str, str],
         graph_data = GraphData(nodes=[])
     return graph_data, id_to_label, errors
 
-# ------------------------------
-# Automated Testing
-# ------------------------------
 def run_tests():
     import unittest
     class UtilityTests(unittest.TestCase):
@@ -1501,15 +1449,6 @@ def run_tests():
     else:
         print("Some tests failed.")
 
-# ------------------------------
-# CI/CD Integration Note:
-# ------------------------------
-# For CI/CD, integrate this script with a continuous integration tool (e.g., GitHub Actions)
-# to run tests (using the --test flag) and enforce code style and dependency management.
-
-# ------------------------------
-# Entry Point
-# ------------------------------
 if __name__ == "__main__":
     import sys
     if "--test" in sys.argv:

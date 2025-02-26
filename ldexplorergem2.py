@@ -1213,8 +1213,8 @@ def main() -> None:
                             html_code = f'''
 <html>
   <head>
-    <link rel="stylesheet" type="text/css" href="https://unpkg.com/mirador/dist/css/mirador.min.css">
-    <script src="https://unpkg.com/mirador/dist/mirador.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/mirador@4.0.0-alpha.11/dist/css/mirador.min.css">
+    <script src="https://unpkg.com/mirador@4.0.0-alpha.11/dist/mirador.js"></script>
   </head>
   <body>
     <div id="mirador-viewer" style="height: 600px;"></div>

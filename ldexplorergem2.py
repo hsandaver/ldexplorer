@@ -175,7 +175,7 @@ def copy_graph(rdf_graph: RDFGraph) -> RDFGraph:
 
 def normalize_relationship_value(rel: str, value: Any) -> Optional[str]:
     if isinstance(value, dict):
-        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner", "dedicatee", "illustrator"}:
+        if rel in {"spouse", "studentOf", "employedBy", "educatedAt", "contributor", "draftsman", "creator", "owner", "dedicatee", "illustrator", "artist"}:
             return remove_fragment(value.get('carriedOutBy', value.get('id', '')))
         elif rel == 'succeededBy':
             return remove_fragment(value.get('resultedIn', ''))

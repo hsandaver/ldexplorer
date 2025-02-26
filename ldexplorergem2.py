@@ -111,7 +111,8 @@ CONFIG = {
         "relatedPlace": "#A3E4D7",
         "analysisOf": "#8B0000",
         "dedicatee": "#1ABC9C",
-        "illustrator": "#8B5A2B"
+        "illustrator": "#8B5A2B",
+        "artist": "#00CED1"  # New relationship added here
     },
     "NODE_TYPE_COLORS": {
         "Person": "#FFA500",

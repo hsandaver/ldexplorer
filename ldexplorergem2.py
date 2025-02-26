@@ -25,7 +25,7 @@ import traceback
 import time
 import functools
 import re
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, parse_qs  # Added parse_qs for query extraction
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple, Set
 
@@ -233,10 +233,21 @@ def normalize_data(data: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 def is_valid_iiif_manifest(url: str) -> bool:
-    if not url.startswith("http"):
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ["http", "https"]:
+            return False
+        # Check if the path indicates a manifest
+        if parsed.path.endswith("manifest") or parsed.path.endswith("manifest.json"):
+            return True
+        # Alternatively, if a 'manifest' query parameter exists, assume it's a valid manifest URL
+        query_params = parse_qs(parsed.query)
+        if 'manifest' in query_params:
+            return True
         return False
-    lower_url = url.lower()
-    return "iiif" in lower_url and ("manifest" in lower_url or lower_url.endswith("manifest.json"))
+    except Exception as e:
+        logging.error(f"Error validating IIIF manifest URL '{url}': {e}")
+        return False
 
 def validate_entity(entity: Dict[str, Any]) -> List[str]:
     errors = []
@@ -1192,9 +1203,11 @@ def main() -> None:
                     if manifest_url:
                         if isinstance(manifest_url, list):
                             manifest_url = manifest_url[0]
-                        prefix = "https://divinity.contentdm.oclc.org/digital/custom/mirador3?manifest="
-                        if manifest_url.startswith(prefix):
-                            manifest_url = manifest_url[len(prefix):]
+                        # Enhanced manifest URL extraction: if a 'manifest' query parameter exists, extract its value.
+                        parsed_url = urlparse(manifest_url)
+                        query_params = parse_qs(parsed_url.query)
+                        if 'manifest' in query_params:
+                            manifest_url = query_params['manifest'][0]
                         if manifest_url.strip() and is_valid_iiif_manifest(manifest_url):
                             st.write(f"Using manifest URL: {manifest_url}")
                             html_code = f'''

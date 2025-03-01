@@ -602,7 +602,15 @@ def build_graph(graph_data: GraphData, id_to_label: Dict[str, str], selected_rel
                 search_nodes: Optional[List[str]] = None, node_positions: Optional[Dict[str, Dict[str, float]]] = None,
                 show_labels: bool = True, filtered_nodes: Optional[Set[str]] = None, community_detection: bool = False,
                 centrality: Optional[Dict[str, Dict[str, float]]] = None, path_nodes: Optional[List[str]] = None) -> Network:
-    net = Network(height="750px", width="100%", directed=True, notebook=False, bgcolor="#f0f2f6", font_color="#343a40")
+    # Determine theme-based colors for the graph
+    dark_mode = st.get_option("theme.base") == "dark"
+    if dark_mode:
+        graph_bg = "#2c2c2c"
+        graph_font = "#dcdcdc"
+    else:
+        graph_bg = "#f0f2f6"
+        graph_font = "#343a40"
+    net = Network(height="750px", width="100%", directed=True, notebook=False, bgcolor=graph_bg, font_color=graph_font)
     net.force_atlas_2based(gravity=st.session_state.physics_params.get("gravity", CONFIG["PHYSICS_DEFAULTS"]["gravity"]),
                              central_gravity=st.session_state.physics_params.get("centralGravity", CONFIG["PHYSICS_DEFAULTS"]["centralGravity"]),
                              spring_length=st.session_state.physics_params.get("springLength", CONFIG["PHYSICS_DEFAULTS"]["springLength"]),
@@ -646,8 +654,8 @@ def build_graph(graph_data: GraphData, id_to_label: Dict[str, str], selected_rel
     node_font_size = 12 if node_count <= 50 else 10
     edge_font_size = 10 if node_count <= 50 else 8
     default_options = {
-        "nodes": {"font": {"size": node_font_size, "face": "Arial", "color": "#343a40", "strokeWidth": 0}},
-        "edges": {"font": {"size": edge_font_size, "face": "Arial", "align": "middle", "color": "#343a40"}, "smooth": {"type": "continuous"}},
+        "nodes": {"font": {"size": node_font_size, "face": "Arial", "color": graph_font, "strokeWidth": 0}},
+        "edges": {"font": {"size": edge_font_size, "face": "Arial", "align": "middle", "color": graph_font}, "smooth": {"type": "continuous"}},
         "physics": {"enabled": False, "hierarchicalRepulsion": {"centralGravity": 0, "springLength": 230, "nodeDistance": 210, "avoidOverlap": 1}, "minVelocity": 0.75, "solver": "hierarchicalRepulsion"},
         "interaction": {"hover": True, "navigationButtons": True, "zoomView": True, "dragNodes": True, "multiselect": True, "selectConnectedEdges": True}
     }
@@ -735,18 +743,69 @@ def create_legends(rel_colors: Dict[str, str], node_colors: Dict[str, str]) -> s
 
 def main() -> None:
     st.set_page_config(page_title="Linked Data Explorer", layout="wide")
+    # Updated custom CSS with CSS variables and dark mode media query
     custom_css = """
     <style>
-        .stApp { max-width: 1600px; padding: 1rem; background-color: #fafafa; color: #343a40; }
-        section[data-testid="stSidebar"] > div { background-color: #f8f9fa; padding: 1rem; }
-        h1, h2, h3, h4, h5 { color: #333; }
-        .stButton > button, .stDownloadButton > button { background-color: #007bff; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 0.3rem; font-size: 1rem; transition: background-color 0.3s ease; }
-        .stButton > button:hover, .stDownloadButton > button:hover { background-color: #0056b3; }
-        .css-1d391kg, .stTextInput, .stSelectbox, .stTextArea { border-radius: 4px; }
-        .stTextInput > label, .stSelectbox > label, .stTextArea > label { font-size: 0.9rem; font-weight: 600; }
-        .stExpander > label { font-size: 0.95rem; font-weight: 700; }
-        .stTabs [role="tab"] { font-weight: 600; }
-        header[data-testid="stHeader"] { background: #f8f9fa; }
+        :root {
+            --background-color: #fafafa;
+            --sidebar-bg: #f8f9fa;
+            --text-color: #343a40;
+            --header-text: #333;
+            --button-bg: #007bff;
+            --button-hover-bg: #0056b3;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --background-color: #1e1e1e;
+                --sidebar-bg: #2c2c2c;
+                --text-color: #dcdcdc;
+                --header-text: #ffffff;
+                --button-bg: #1a73e8;
+                --button-hover-bg: #1558b0;
+            }
+        }
+        .stApp { 
+            max-width: 1600px; 
+            padding: 1rem; 
+            background-color: var(--background-color); 
+            color: var(--text-color); 
+        }
+        section[data-testid="stSidebar"] > div { 
+            background-color: var(--sidebar-bg); 
+            padding: 1rem; 
+        }
+        h1, h2, h3, h4, h5 { 
+            color: var(--header-text); 
+        }
+        .stButton > button, .stDownloadButton > button { 
+            background-color: var(--button-bg); 
+            color: white; 
+            border: none; 
+            padding: 0.6rem 1.2rem; 
+            border-radius: 0.3rem; 
+            font-size: 1rem; 
+            transition: background-color 0.3s ease; 
+        }
+        .stButton > button:hover, .stDownloadButton > button:hover { 
+            background-color: var(--button-hover-bg); 
+        }
+        .css-1d391kg, .stTextInput, .stSelectbox, .stTextArea { 
+            border-radius: 4px; 
+        }
+        .stTextInput > label, .stSelectbox > label, .stTextArea > label { 
+            font-size: 0.9rem; 
+            font-weight: 600; 
+        }
+        .stExpander > label { 
+            font-size: 0.95rem; 
+            font-weight: 700; 
+        }
+        .stTabs [role="tab"] { 
+            font-weight: 600; 
+        }
+        header[data-testid="stHeader"] { 
+            background: var(--sidebar-bg); 
+        }
     </style>
     """
     st.markdown(custom_css, unsafe_allow_html=True)
